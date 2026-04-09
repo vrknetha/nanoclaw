@@ -93,6 +93,22 @@ From the main channel (your self-chat), you can manage groups and tasks:
 @Andy join the Family Chat group
 ```
 
+### Session Commands (In Chat)
+
+Use these as standalone messages:
+
+```text
+/compact
+/new
+/model
+/model opus
+/model claude-opus-4-1-20250805
+/model default
+```
+
+- `/new` starts a fresh session for the current group and archives the previous transcript to `groups/<group-folder>/conversations/`.
+- `/model <value>` only persists the override when the switch succeeds (invalid values are rejected and the existing override is kept).
+
 ## Customizing
 
 NanoClaw doesn't use configuration files. To make changes, just tell Claude Code what you want:
@@ -213,6 +229,7 @@ To switch an existing group session mid-conversation, use the session command:
 ```
 
 `/model` changes are per-group and persist after successful switches.
+Use `/new` to clear session history for the current group while keeping model override behavior unchanged.
 
 **How do I debug issues?**
 
