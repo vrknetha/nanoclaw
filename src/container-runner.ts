@@ -252,6 +252,12 @@ async function buildContainerArgs(
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
 
+  // Pass model override if configured
+  const { CLAUDE_MODEL } = await import('./config.js');
+  if (CLAUDE_MODEL) {
+    args.push('-e', `CLAUDE_MODEL=${CLAUDE_MODEL}`);
+  }
+
   // OneCLI gateway handles credential injection — containers never see real secrets.
   // The gateway intercepts HTTPS traffic and injects API keys or OAuth tokens.
   const onecliApplied = await onecli.applyContainerConfig(args, {
