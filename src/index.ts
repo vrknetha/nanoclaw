@@ -197,7 +197,10 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
   );
 }
 
-function setGroupModelOverride(chatJid: string, model: string | undefined): void {
+function setGroupModelOverride(
+  chatJid: string,
+  model: string | undefined,
+): void {
   const existingGroup = registeredGroups[chatJid];
   if (!existingGroup) return;
 

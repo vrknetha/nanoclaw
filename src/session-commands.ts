@@ -87,7 +87,10 @@ function resultToText(result: string | object | null | undefined): string {
 
 function sanitizeErrorText(text: string): string {
   const noAnsi = text.replace(/\u001b\[[0-9;]*m/g, '');
-  const normalized = noAnsi.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const normalized = noAnsi
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
   if (normalized.length <= MAX_MODEL_ERROR_MESSAGE_CHARS) return normalized;
   return `${normalized.slice(0, MAX_MODEL_ERROR_MESSAGE_CHARS - 1)}…`;
 }
@@ -194,7 +197,10 @@ export async function handleSessionCommand(opts: {
     try {
       deps.clearCurrentSession();
     } catch (err) {
-      logger.error({ group: groupName, err }, 'Failed to reset session for /new');
+      logger.error(
+        { group: groupName, err },
+        'Failed to reset session for /new',
+      );
       await deps.sendMessage('/new failed. The session is unchanged.');
       return { handled: true, success: false };
     }

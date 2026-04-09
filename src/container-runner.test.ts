@@ -246,7 +246,11 @@ describe('container-runner timeout behavior', () => {
       ...testGroup,
       containerConfig: { model: 'opus' },
     };
-    const resultPromise = runContainerAgent(groupWithModel, testInput, () => {});
+    const resultPromise = runContainerAgent(
+      groupWithModel,
+      testInput,
+      () => {},
+    );
 
     await vi.advanceTimersByTimeAsync(10);
     fakeProc.emit('close', 0);
@@ -264,8 +268,7 @@ describe('container-runner timeout behavior', () => {
 
   it('rewrites docker-host proxy aliases for host runtime env', () => {
     const env = _normalizeHostRuntimeEnvForTests({
-      HTTPS_PROXY:
-        'http://x:secret@host.docker.internal:10255',
+      HTTPS_PROXY: 'http://x:secret@host.docker.internal:10255',
       HTTP_PROXY: 'http://gateway.docker.internal:10255',
       ANTHROPIC_BASE_URL: 'https://host.docker.internal/v1',
       CLAUDE_CODE_OAUTH_TOKEN: 'token',

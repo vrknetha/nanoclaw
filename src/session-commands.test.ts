@@ -506,7 +506,9 @@ describe('handleSessionCommand', () => {
       { timeoutMs: 90_000 },
     );
     expect(deps.setGroupModelOverride).toHaveBeenCalledWith('opus');
-    expect(deps.sendMessage).toHaveBeenCalledWith('Model set to opus for this group.');
+    expect(deps.sendMessage).toHaveBeenCalledWith(
+      'Model set to opus for this group.',
+    );
   });
 
   it('does not persist /model override when validation fails', async () => {

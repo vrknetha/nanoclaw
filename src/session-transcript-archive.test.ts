@@ -48,7 +48,9 @@ async function loadArchiveModule() {
 }
 
 beforeEach(() => {
-  tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-session-archive-'));
+  tempRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'nanoclaw-session-archive-'),
+  );
   dataDir = path.join(tempRoot, 'data');
   groupsDir = path.join(tempRoot, 'groups');
   fs.mkdirSync(dataDir, { recursive: true });

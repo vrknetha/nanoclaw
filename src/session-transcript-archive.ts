@@ -62,7 +62,9 @@ function getSessionSummary(
   if (!fs.existsSync(indexPath)) return null;
 
   try {
-    const index = JSON.parse(fs.readFileSync(indexPath, 'utf-8')) as SessionsIndex;
+    const index = JSON.parse(
+      fs.readFileSync(indexPath, 'utf-8'),
+    ) as SessionsIndex;
     const entry = index.entries?.find((item) => item.sessionId === sessionId);
     return entry?.summary?.trim() || null;
   } catch (err) {
@@ -155,7 +157,9 @@ function formatTranscriptMarkdown(
   for (const msg of messages) {
     const sender = msg.role === 'user' ? 'User' : assistantName || 'Assistant';
     const clipped =
-      msg.content.length > 2000 ? `${msg.content.slice(0, 2000)}...` : msg.content;
+      msg.content.length > 2000
+        ? `${msg.content.slice(0, 2000)}...`
+        : msg.content;
     lines.push(`**${sender}**: ${clipped}`);
     lines.push('');
   }
@@ -200,7 +204,10 @@ function findTranscriptByFileName(
   return null;
 }
 
-function findTranscriptPath(groupFolder: string, sessionId: string): string | null {
+function findTranscriptPath(
+  groupFolder: string,
+  sessionId: string,
+): string | null {
   const projectsDir = path.join(
     DATA_DIR,
     'sessions',
@@ -208,7 +215,11 @@ function findTranscriptPath(groupFolder: string, sessionId: string): string | nu
     '.claude',
     'projects',
   );
-  const expectedPath = path.join(projectsDir, '-workspace-group', `${sessionId}.jsonl`);
+  const expectedPath = path.join(
+    projectsDir,
+    '-workspace-group',
+    `${sessionId}.jsonl`,
+  );
 
   if (fs.existsSync(expectedPath)) return expectedPath;
   if (!fs.existsSync(projectsDir)) return null;
@@ -244,16 +255,26 @@ export function archiveSessionTranscript(
     const summary = getSessionSummary(sessionId, transcriptPath);
     const now = new Date();
     const date = now.toISOString().split('T')[0];
-    const safeName = summary ? sanitizeFilename(summary) : generateTimestampName(now);
+    const safeName = summary
+      ? sanitizeFilename(summary)
+      : generateTimestampName(now);
 
     const groupPath = resolveGroupFolderPath(groupFolder);
     const conversationsDir = path.join(groupPath, 'conversations');
     fs.mkdirSync(conversationsDir, { recursive: true });
 
     const filePath = path.join(conversationsDir, `${date}-${safeName}.md`);
-    const markdown = formatTranscriptMarkdown(messages, summary, assistantName, now);
+    const markdown = formatTranscriptMarkdown(
+      messages,
+      summary,
+      assistantName,
+      now,
+    );
     fs.writeFileSync(filePath, markdown);
-    logger.info({ groupFolder, sessionId, filePath }, 'Archived session transcript');
+    logger.info(
+      { groupFolder, sessionId, filePath },
+      'Archived session transcript',
+    );
 
     return filePath;
   } catch (err) {
