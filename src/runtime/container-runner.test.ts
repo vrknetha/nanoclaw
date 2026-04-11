@@ -8,6 +8,7 @@ const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
 
 // Mock config
 vi.mock('../core/config.js', () => ({
+  AGENT_MEMORY_ROOT: '/tmp/nanoclaw-agent-memory',
   AGENT_RUNTIME: 'container',
   CONTAINER_IMAGE: 'nanoclaw-agent:latest',
   CONTAINER_MAX_OUTPUT_SIZE: 10485760,
@@ -265,6 +266,23 @@ describe('container-runner timeout behavior', () => {
     const joinedArgs = args.join(' ');
     expect(joinedArgs).toContain('ANTHROPIC_MODEL=opus');
     expect(joinedArgs).toContain('CLAUDE_MODEL=opus');
+  });
+
+  it('mounts AGENT_MEMORY_ROOT and forwards it to the runner env', async () => {
+    const resultPromise = runContainerAgent(testGroup, testInput, () => {});
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    const spawnCalls = vi.mocked(spawn).mock.calls;
+    expect(spawnCalls.length).toBeGreaterThan(0);
+    const args = spawnCalls[spawnCalls.length - 1][1] as string[];
+    const joinedArgs = args.join(' ');
+    expect(joinedArgs).toContain(
+      '/tmp/nanoclaw-agent-memory:/workspace/agent-memory',
+    );
+    expect(joinedArgs).toContain('AGENT_MEMORY_ROOT=/workspace/agent-memory');
   });
 
   it('rewrites docker-host proxy aliases for host runtime env', () => {

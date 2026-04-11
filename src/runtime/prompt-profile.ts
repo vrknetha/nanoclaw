@@ -12,6 +12,9 @@ type PromptSectionName =
   | 'GROUP_CONTEXT';
 
 const PERSONAL_PROFILE_FILENAME = 'CLAUDE.md';
+const PERSONAL_PROFILE_SOURCE = 'nanoclaw://personal-profile';
+const GLOBAL_CONTEXT_SOURCE = 'nanoclaw://global-context';
+const GROUP_CONTEXT_SOURCE = 'nanoclaw://group-context';
 
 const EXPECTED_PROFILE_SECTIONS = [
   'Identity',
@@ -256,7 +259,7 @@ export class PromptProfileService {
 
     return {
       name: 'PERSONAL_PROFILE',
-      source: profilePath,
+      source: PERSONAL_PROFILE_SOURCE,
       content,
     };
   }
@@ -267,6 +270,7 @@ export class PromptProfileService {
       'GLOBAL_CONTEXT',
       globalPath,
       this.sectionBudgets.GLOBAL_CONTEXT,
+      GLOBAL_CONTEXT_SOURCE,
     );
   }
 
@@ -281,6 +285,7 @@ export class PromptProfileService {
       'GROUP_CONTEXT',
       groupPath,
       this.sectionBudgets.GROUP_CONTEXT,
+      GROUP_CONTEXT_SOURCE,
     );
   }
 
@@ -288,6 +293,7 @@ export class PromptProfileService {
     name: PromptSectionName,
     filePath: string,
     budget: number,
+    source: string,
   ): PromptSection | null {
     if (!fs.existsSync(filePath)) return null;
 
@@ -301,7 +307,7 @@ export class PromptProfileService {
 
       return {
         name,
-        source: filePath,
+        source,
         content,
       };
     } catch (err) {

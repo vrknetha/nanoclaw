@@ -63,7 +63,7 @@ A personal Claude assistant accessible via messaging, with minimal custom code.
 - **Containers** for isolated agent execution (Linux VMs)
 - **Multi-channel messaging** (WhatsApp, Telegram, Discord, Slack, Gmail) — add exactly the channels you need
 - **Persistent memory** per conversation and globally
-- **Scheduled tasks** that run Claude and can message back
+- **Scheduled jobs** that run Claude and can message back
 - **Web access** for search and browsing
 - **Browser automation** via agent-browser
 
@@ -106,7 +106,7 @@ A personal Claude assistant accessible via messaging, with minimal custom code.
 - Tasks can optionally send messages to their group via `send_message` tool, or complete silently
 - Task runs are logged to the database with duration and result
 - Schedule types: cron expressions, intervals (ms), or one-time (ISO timestamp)
-- From main: can schedule tasks for any group, view/manage all tasks
+- From main: can schedule jobs for any group, view/manage all jobs
 - From other groups: can only manage that group's tasks
 
 ### Group Management
@@ -118,8 +118,8 @@ A personal Claude assistant accessible via messaging, with minimal custom code.
 ### Main Channel Privileges
 - Main channel is the admin/control group (typically self-chat)
 - Can write to global memory (`groups/CLAUDE.md`)
-- Can schedule tasks for any group
-- Can view and manage tasks from all groups
+- Can schedule jobs for any group
+- Can view and manage jobs from all groups
 - Can configure additional directory mounts for any group
 
 ---
@@ -133,12 +133,12 @@ A personal Claude assistant accessible via messaging, with minimal custom code.
 - Channels self-register at startup — unconfigured channels are skipped with a warning
 
 ### Scheduler
-- Built-in scheduler runs on the host, spawns containers for task execution
+- Built-in scheduler runs on the host, spawns containers for job execution
 - Custom `nanoclaw` MCP server (inside container) provides scheduling tools
-- Tools: `schedule_task`, `list_tasks`, `pause_task`, `resume_task`, `cancel_task`, `send_message`
-- Tasks stored in SQLite with run history
-- Scheduler loop checks for due tasks every minute
-- Tasks execute Claude Agent SDK in containerized group context
+- Tools: `scheduler_upsert_job`, `scheduler_get_job`, `scheduler_list_jobs`, `scheduler_update_job`, `scheduler_delete_job`, `scheduler_pause_job`, `scheduler_resume_job`, `scheduler_trigger_job`, `scheduler_list_runs`, `scheduler_get_dead_letter`, `send_message`
+- Jobs stored in SQLite with run history
+- Scheduler loop checks for due jobs every minute
+- Jobs execute Claude Agent SDK in containerized group context
 
 ### Web Access
 - Built-in WebSearch and WebFetch tools

@@ -1,6 +1,6 @@
 ---
 name: status
-description: Quick read-only health check — session context, workspace mounts, tool availability, and task snapshot. Use when the user asks for system status or runs /status.
+description: Quick read-only health check — session context, workspace mounts, tool availability, and scheduler snapshot. Use when the user asks for system status or runs /status.
 ---
 
 # /status — System Status Check
@@ -50,7 +50,7 @@ Confirm which tool families are available to you:
 - **Core:** Bash, Read, Write, Edit, Glob, Grep
 - **Web:** WebSearch, WebFetch
 - **Orchestration:** Task, TaskOutput, TaskStop, TeamCreate, TeamDelete, SendMessage
-- **MCP:** mcp__nanoclaw__* (send_message, schedule_task, list_tasks, pause_task, resume_task, cancel_task, update_task, register_group)
+- **MCP:** mcp__nanoclaw__* (send_message, scheduler_upsert/get/list/update/delete/pause/resume/trigger/list_runs/get_dead_letter, register_group)
 
 ### 4. Container utilities
 
@@ -60,15 +60,13 @@ node --version 2>/dev/null
 claude --version 2>/dev/null
 ```
 
-### 5. Task snapshot
+### 5. Scheduler snapshot
 
-Use the MCP tool to list tasks:
+Use the MCP tools:
+- `mcp__nanoclaw__scheduler_list_jobs`
+- `mcp__nanoclaw__scheduler_list_runs`
 
-```
-Call mcp__nanoclaw__list_tasks to get scheduled tasks.
-```
-
-If no tasks exist, report "No scheduled tasks."
+If no jobs exist, report "No scheduled jobs."
 
 ## Report format
 
@@ -95,8 +93,8 @@ Present as a clean, readable message:
 • Node: vXX.X.X
 • Claude Code: vX.X.X
 
-*Scheduled Tasks:*
-• N active tasks / No scheduled tasks
+*Scheduled Jobs:*
+• N active jobs / No scheduled jobs
 ```
 
 Adapt based on what you actually find. Keep it concise — this is a quick health check, not a deep diagnostic.

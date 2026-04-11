@@ -1,6 +1,6 @@
 # NanoClaw Specification
 
-A personal Claude assistant with multi-channel support, persistent memory per conversation, scheduled tasks, and container-isolated agent execution.
+A personal Claude assistant with multi-channel support, persistent memory per conversation, scheduled jobs, and container-isolated agent execution.
 
 ---
 
@@ -14,7 +14,7 @@ A personal Claude assistant with multi-channel support, persistent memory per co
 6. [Session Management](#session-management)
 7. [Message Flow](#message-flow)
 8. [Commands](#commands)
-9. [Scheduled Tasks](#scheduled-tasks)
+9. [Scheduled Jobs](#scheduled-jobs)
 10. [MCP Servers](#mcp-servers)
 11. [Deployment](#deployment)
 12. [Security Considerations](#security-considerations)
@@ -158,7 +158,7 @@ Each factory receives `ChannelOpts` (callbacks for `onMessage`, `onChatMetadata`
 
 ### Channel Interface
 
-Every channel implements this interface (defined in `src/types.ts`):
+Every channel implements this interface (defined in `src/core/types.ts`):
 
 ```typescript
 interface Channel {
@@ -219,9 +219,9 @@ Channels self-register using a barrel-import pattern:
 |------|---------|
 | `src/channels/registry.ts` | Channel factory registry |
 | `src/channels/index.ts` | Barrel imports that trigger channel self-registration |
-| `src/types.ts` | `Channel` interface, `ChannelOpts`, message types |
+| `src/core/types.ts` | `Channel` interface, `ChannelOpts`, message types |
 | `src/index.ts` | Orchestrator — instantiates channels, runs message loop |
-| `src/router.ts` | Finds the owning channel for a JID, formats messages |
+| `src/messaging/router.ts` | Finds the owning channel for a JID, formats messages |
 
 ### Adding a New Channel
 
@@ -256,7 +256,7 @@ nanoclaw/
 │   ├── channels/
 │   │   ├── registry.ts            # Channel factory registry
 │   │   └── index.ts               # Barrel imports for channel self-registration
-│   ├── ipc.ts                     # IPC watcher and task processing
+│   ├── ipc.ts                     # IPC watcher and scheduler job processing
 │   ├── router.ts                  # Message formatting and outbound routing
 │   ├── config.ts                  # Configuration constants
 │   ├── types.ts                   # TypeScript interfaces (includes Channel)
@@ -265,7 +265,7 @@ nanoclaw/
 │   ├── group-queue.ts             # Per-group queue with global concurrency limit
 │   ├── mount-security.ts          # Mount allowlist validation for containers
 │   ├── whatsapp-auth.ts           # Standalone WhatsApp authentication
-│   ├── task-scheduler.ts          # Runs scheduled tasks when due
+│   ├── task-scheduler.ts          # Runs scheduled jobs when due
 │   └── container-runner.ts        # Spawns agents in containers
 │
 ├── container/
@@ -306,7 +306,7 @@ nanoclaw/
 │
 ├── store/                         # Local data (gitignored)
 │   ├── auth/                      # WhatsApp authentication state
-│   └── messages.db                # SQLite database (messages, chats, scheduled_tasks, task_run_logs, registered_groups, sessions, router_state)
+│   └── messages.db                # SQLite database (messages, chats, jobs, job_runs, job_events, registered_groups, sessions, router_state)
 │
 ├── data/                          # Application state (gitignored)
 │   ├── sessions/                  # Per-group session data (.claude/ dirs with JSONL transcripts)
@@ -326,7 +326,7 @@ nanoclaw/
 
 ## Configuration
 
-Configuration constants are in `src/config.ts`:
+Configuration constants are in `src/core/config.ts`:
 
 ```typescript
 import path from 'path';
@@ -343,6 +343,7 @@ export const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
 
 // Container configuration
 export const CONTAINER_IMAGE = process.env.CONTAINER_IMAGE || 'nanoclaw-agent:latest';
+export const AGENT_RUNTIME = process.env.AGENT_RUNTIME || 'container'; // strict: host | container
 export const CONTAINER_TIMEOUT = parseInt(process.env.CONTAINER_TIMEOUT || '1800000', 10); // 30min default
 export const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL;
 export const CLAUDE_MODEL = process.env.CLAUDE_MODEL; // backward-compatible fallback
@@ -418,7 +419,7 @@ Set the `ASSISTANT_NAME` environment variable:
 ASSISTANT_NAME=Bot npm start
 ```
 
-Or edit the default in `src/config.ts`. This changes:
+Or edit the default in `src/core/config.ts`. This changes:
 - The trigger pattern (messages must start with `@YourName`)
 - The response prefix (`YourName:` added automatically)
 
@@ -433,9 +434,9 @@ Files with `{{PLACEHOLDER}}` values need to be configured:
 
 ## Memory System
 
-NanoClaw uses a hierarchical memory system based on CLAUDE.md files.
+NanoClaw has two memory layers: a file-based layer (CLAUDE.md) that the Claude Agent SDK loads automatically, and a structured memory store (SQLite + vector embeddings) exposed via MCP tools. Both work together.
 
-### Memory Hierarchy
+### Memory Hierarchy (File Layer)
 
 | Level | Location | Read By | Written By | Purpose |
 |-------|----------|---------|------------|---------|
@@ -443,7 +444,7 @@ NanoClaw uses a hierarchical memory system based on CLAUDE.md files.
 | **Group** | `groups/{name}/CLAUDE.md` | That group | That group | Group-specific context, conversation memory |
 | **Files** | `groups/{name}/*.md` | That group | That group | Notes, research, documents created during conversation |
 
-### How Memory Works
+### How File-Based Memory Works
 
 1. **Agent Context Loading**
    - Agent runs with `cwd` set to `groups/{group-name}/`
@@ -458,9 +459,169 @@ NanoClaw uses a hierarchical memory system based on CLAUDE.md files.
 
 3. **Main Channel Privileges**
    - Only the "main" group (self-chat) can write to global memory
-   - Main can manage registered groups and schedule tasks for any group
+   - Main can manage registered groups and schedule jobs for any group
    - Main can configure additional directory mounts for any group
    - All groups have Bash access (safe because it runs inside container)
+
+### Structured Memory Store
+
+The structured memory store provides semantic search, versioned facts, and learned procedures. It runs on SQLite with sqlite-vec for vector search.
+
+#### Storage Backend
+
+| Component | Technology | Purpose |
+|-----------|-----------|---------|
+| **Facts & procedures** | SQLite (`memory_items`, `memory_procedures`) | Key-value structured memory with scoping, confidence, versioning |
+| **Chunks** | SQLite (`memory_chunks`) | Chunked text from ingested source files |
+| **Lexical search** | FTS5 (`memory_chunks_fts`) | BM25 keyword search with unicode61 tokenization |
+| **Vector search** | sqlite-vec (`memory_chunks_vec`) | Semantic similarity search on embeddings |
+| **Audit log** | SQLite (`memory_events`) | All memory operations logged for debugging |
+
+Default database path: `store/memory.db`
+
+#### MCP Tools (Exposed to Agents)
+
+Agents interact with memory via MCP tools over IPC:
+
+| Tool | Purpose |
+|------|---------|
+| `memory_save` | Save a fact, preference, correction, or context item |
+| `memory_search` | Hybrid lexical + vector search across chunks and items |
+| `memory_patch` | Update an existing item (optimistic concurrency via version) |
+| `procedure_save` | Save a reusable multi-step procedure |
+| `procedure_patch` | Update an existing procedure |
+
+#### Memory Scoping
+
+Three-tier scope model with strict isolation:
+
+| Scope | Write Access | Read Access | Use Case |
+|-------|-------------|-------------|----------|
+| `global` | Main only | All groups | Cross-group preferences, shared facts |
+| `group` | That group | That group | Group-specific knowledge |
+| `user` | That group | That group | Per-user facts within a group |
+
+Default scope is controlled by `MEMORY_SCOPE_POLICY` (default: `group`).
+
+#### Search Architecture (Hybrid Retrieval)
+
+Search combines two channels using Reciprocal Rank Fusion (K=60):
+
+1. **Lexical (BM25)**: FTS5 with unicode61 tokenization, NFKC normalization. Score: `1 / (1 + bm25_rank)`
+2. **Vector (Semantic)**: OpenAI embeddings (text-embedding-3-large, 3072 dims). Score: `1 / (1 + distance)`
+3. **Fusion**: RRF merges both ranked lists. For each result at rank i: `score += 1 / (K + i + 1)`. Top-K returned.
+
+#### Source Ingestion
+
+On each message or scheduled task, NanoClaw auto-ingests group source files into the chunk store:
+
+| Source | Path | Source Type |
+|--------|------|-------------|
+| CLAUDE.md | `groups/{name}/CLAUDE.md` | `claude_md` |
+| Memory directory | `groups/{name}/memory/**/*.md` | `local_doc` |
+
+**Chunking**: Sliding window (default 1400 chars, 240 overlap). Chunks < 30 chars are filtered. Deduplication via SHA256 hash of `scope:group:source_type:source_id:text`.
+
+**Embedding**: Batch embedding via OpenAI API (default batch size 16). Only new chunks (not matching existing hashes) are embedded.
+
+**Retention**: Chunks older than `MEMORY_CHUNK_RETENTION_DAYS` (default 120) are pruned. Max `MEMORY_MAX_CHUNKS_PER_GROUP` (default 6000) per group.
+
+#### Reflection (Auto-Capture)
+
+After each agent turn, the system can extract facts from the conversation:
+- Detects preferences, corrections, conventions via regex patterns
+- Stores with reflection-derived confidence scores (preferences: 0.82, corrections: 0.8, conventions: 0.78)
+- Filters sensitive material (API keys, tokens, passwords)
+- Controlled by `MEMORY_REFLECTION_MIN_CONFIDENCE` (default 0.7) and `MEMORY_REFLECTION_MAX_FACTS_PER_TURN` (default 5)
+
+### Memory Providers
+
+NanoClaw supports two memory provider backends, set via `MEMORY_PROVIDER`:
+
+#### `sqlite` (Default)
+
+Standard SQLite backend. All data lives in `MEMORY_SQLITE_PATH` (default: `store/memory.db`).
+
+- Simple, single-file storage
+- No external dependencies beyond sqlite-vec
+- Good for most deployments
+
+#### `qmd` (Durable Markdown Mirror)
+
+QMD wraps the SQLite provider and mirrors every write to a filesystem tree at `AGENT_MEMORY_ROOT`. The SQLite database still handles all reads and search. The markdown mirror provides:
+
+- **Human-readable audit trail** — every memory item and procedure is a markdown file
+- **Git-friendly durability** — the memory root can be committed to version control
+- **Journal logging** — all operations (saves, patches, lifecycle events) appended to daily journal files
+- **Session archiving** — compacted/stale sessions archived as dated markdown files
+
+**Required config**: `AGENT_MEMORY_ROOT` must be set to an absolute path.
+
+**Filesystem layout**:
+
+```
+{AGENT_MEMORY_ROOT}/
+├── profile/          # Memory items as markdown (one file per item)
+│   ├── mem-1712345678-a1b2.md
+│   └── mem-1712345679-c3d4.md
+├── procedures/       # Learned procedures as markdown
+│   └── proc-1712345680-e5f6.md
+├── journal/          # Daily audit log of all memory operations
+│   └── 2026/
+│       └── 04/
+│           └── 2026-04-11.md
+├── sessions/         # Archived session transcripts
+│   └── 2026/
+│       └── 04/
+│           └── 2026-04-11/
+│               └── 143022-stale-session-auth-fix.md
+├── knowledge/        # Reserved for future use
+├── .raw/             # Raw data storage
+└── .cache/
+    └── memory.db     # SQLite database (search index)
+```
+
+**How QMD writes work**:
+
+1. Agent calls `memory_save` → SQLite insert (same as `sqlite` provider)
+2. QMD wrapper also writes `profile/{sanitized-id}.md` with full metadata + value
+3. QMD appends a journal entry: timestamp, action, scope, key, file path
+4. All filesystem writes are atomic (write to `.tmp`, then rename)
+
+**How QMD reads work**: Identical to `sqlite` provider. All search hits the SQLite database, not the filesystem. The markdown files are for durability and human review only.
+
+**When to use QMD**:
+- You want a git-committable audit trail of what the agent remembers
+- You need to inspect memory contents without querying SQLite
+- You want session transcripts preserved as readable files
+- You're debugging memory behavior and need a journal
+
+**When `sqlite` is sufficient**:
+- Standard deployments where SQLite durability is enough
+- You don't need human-readable memory files
+- You want minimal disk I/O overhead
+
+### Memory Configuration Reference
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MEMORY_PROVIDER` | `sqlite` | Backend: `sqlite` or `qmd` |
+| `MEMORY_SQLITE_PATH` | `store/memory.db` | Path to SQLite database |
+| `AGENT_MEMORY_ROOT` | (empty) | Filesystem root for QMD mirror (required if provider is `qmd`) |
+| `MEMORY_EMBED_PROVIDER` | `openai` | Embedding provider |
+| `MEMORY_EMBED_MODEL` | `text-embedding-3-large` | Embedding model |
+| `MEMORY_VECTOR_DIMENSIONS` | `3072` | Vector dimensions (must match model output) |
+| `MEMORY_EMBED_BATCH_SIZE` | `16` | Texts per embedding API call |
+| `MEMORY_CHUNK_SIZE` | `1400` | Characters per chunk |
+| `MEMORY_CHUNK_OVERLAP` | `240` | Overlap between chunks |
+| `MEMORY_RETRIEVAL_LIMIT` | `8` | Default results per search |
+| `MEMORY_SCOPE_POLICY` | `group` | Default scope for new items |
+| `MEMORY_REFLECTION_MIN_CONFIDENCE` | `0.7` | Min confidence for auto-captured facts |
+| `MEMORY_REFLECTION_MAX_FACTS_PER_TURN` | `5` | Max facts extracted per turn |
+| `MEMORY_MAX_CHUNKS_PER_GROUP` | `6000` | Chunk cap per group |
+| `MEMORY_CHUNK_RETENTION_DAYS` | `120` | Days before chunks are pruned |
+| `MEMORY_MAX_EVENTS` | `20000` | Max audit log entries |
+| `MEMORY_MAX_PROCEDURES_PER_GROUP` | `500` | Procedure cap per group |
 
 ---
 
@@ -564,16 +725,16 @@ This allows the agent to understand the conversation context even if it wasn't m
 
 ---
 
-## Scheduled Tasks
+## Scheduled Jobs
 
-NanoClaw has a built-in scheduler that runs tasks as full agents in their group's context.
+NanoClaw has a built-in scheduler that runs jobs as full agents in their group's context.
 
 ### How Scheduling Works
 
-1. **Group Context**: Tasks created in a group run with that group's working directory and memory
-2. **Full Agent Capabilities**: Scheduled tasks have access to all tools (WebSearch, file operations, etc.)
-3. **Optional Messaging**: Tasks can send messages to their group using the `send_message` tool, or complete silently
-4. **Main Channel Privileges**: The main channel can schedule tasks for any group and view all tasks
+1. **Group Context**: Jobs created in a group run with that group's working directory and memory
+2. **Full Agent Capabilities**: Scheduled jobs have access to all tools (WebSearch, file operations, etc.)
+3. **Optional Messaging**: Jobs can send messages to their group using the `send_message` tool, or complete silently
+4. **Main Channel Privileges**: The main channel can schedule jobs for any group and view all jobs
 
 ### Schedule Types
 
@@ -583,45 +744,49 @@ NanoClaw has a built-in scheduler that runs tasks as full agents in their group'
 | `interval` | Milliseconds | `3600000` (every hour) |
 | `once` | ISO timestamp | `2024-12-25T09:00:00Z` |
 
-### Creating a Task
+### Creating a Job
 
 ```
 User: @Andy remind me every Monday at 9am to review the weekly metrics
 
-Claude: [calls mcp__nanoclaw__schedule_task]
+Claude: [calls mcp__nanoclaw__scheduler_upsert_job]
         {
+          "name": "weekly-metrics-reminder",
           "prompt": "Send a reminder to review weekly metrics. Be encouraging!",
           "schedule_type": "cron",
-          "schedule_value": "0 9 * * 1"
+          "schedule_value": "0 9 * * 1",
+          "linked_sessions": ["<current_chat_jid>"]
         }
 
 Claude: Done! I'll remind you every Monday at 9am.
 ```
 
-### One-Time Tasks
+### One-Time Jobs
 
 ```
 User: @Andy at 5pm today, send me a summary of today's emails
 
-Claude: [calls mcp__nanoclaw__schedule_task]
+Claude: [calls mcp__nanoclaw__scheduler_upsert_job]
         {
+          "name": "today-email-summary",
           "prompt": "Search for today's emails, summarize the important ones, and send the summary to the group.",
           "schedule_type": "once",
-          "schedule_value": "2024-01-31T17:00:00Z"
+          "schedule_value": "2024-01-31T17:00:00Z",
+          "linked_sessions": ["<current_chat_jid>"]
         }
 ```
 
-### Managing Tasks
+### Managing Jobs
 
 From any group:
-- `@Andy list my scheduled tasks` - View tasks for this group
-- `@Andy pause task [id]` - Pause a task
-- `@Andy resume task [id]` - Resume a paused task
-- `@Andy cancel task [id]` - Delete a task
+- `@Andy list my scheduled jobs` - View jobs for this group
+- `@Andy pause job [id]` - Pause a job
+- `@Andy resume job [id]` - Resume a paused job
+- `@Andy delete job [id]` - Delete a job
 
 From main channel:
-- `@Andy list all tasks` - View tasks from all groups
-- `@Andy schedule task for "Family Chat": [prompt]` - Schedule for another group
+- `@Andy list all jobs` - View jobs from all groups
+- `@Andy schedule job for "Family Chat": [prompt]` - Schedule for another group
 
 ---
 
@@ -634,13 +799,16 @@ The `nanoclaw` MCP server is created dynamically per agent call with the current
 **Available Tools:**
 | Tool | Purpose |
 |------|---------|
-| `schedule_task` | Schedule a recurring or one-time task |
-| `list_tasks` | Show tasks (group's tasks, or all if main) |
-| `get_task` | Get task details and run history |
-| `update_task` | Modify task prompt or schedule |
-| `pause_task` | Pause a task |
-| `resume_task` | Resume a paused task |
-| `cancel_task` | Delete a task |
+| `scheduler_upsert_job` | Create or update a scheduler job |
+| `scheduler_get_job` | Get job details |
+| `scheduler_list_jobs` | List jobs |
+| `scheduler_update_job` | Modify job prompt/schedule/policy |
+| `scheduler_delete_job` | Delete a job |
+| `scheduler_pause_job` | Pause a job |
+| `scheduler_resume_job` | Resume a paused job |
+| `scheduler_trigger_job` | Trigger immediate job run |
+| `scheduler_list_runs` | List job run history |
+| `scheduler_get_dead_letter` | List dead-lettered runs |
 | `send_message` | Send a message to the group via its channel |
 
 ---
@@ -652,11 +820,13 @@ NanoClaw runs as a single macOS launchd service.
 ### Startup Sequence
 
 When NanoClaw starts, it:
-1. **Ensures container runtime is running** - Automatically starts it if needed; kills orphaned NanoClaw containers from previous runs
-2. Initializes the SQLite database (migrates from JSON files if they exist)
-3. Loads state from SQLite (registered groups, sessions, router state)
-4. **Connects channels** — loops through registered channels, instantiates those with credentials, calls `connect()` on each
-5. Once at least one channel is connected:
+1. **Runs runtime preflight for `AGENT_RUNTIME`** - validates strict mode (`host|container`) and emits actionable fix steps on failure
+2. **Host mode only**: auto-builds `container/agent-runner` artifacts and fails startup if build fails
+3. **Container mode only**: validates container runtime health and cleans up orphaned NanoClaw containers
+4. Initializes the SQLite database (migrates from JSON files if they exist)
+5. Loads state from SQLite (registered groups, sessions, router state)
+6. **Connects channels** — loops through registered channels, instantiates those with credentials, calls `connect()` on each
+7. Once at least one channel is connected:
    - Starts the scheduler loop
    - Starts the IPC watcher for container messages
    - Sets up the per-group queue with `processGroupMessages`
@@ -724,7 +894,13 @@ tail -f logs/nanoclaw.log
 
 ## Security Considerations
 
-### Container Isolation
+### Runtime Isolation
+
+`AGENT_RUNTIME=container` is the default and recommended mode for security boundaries.
+
+`AGENT_RUNTIME=host` is high-trust mode for host-level capabilities and intentionally bypasses container isolation.
+
+### Container Isolation (`AGENT_RUNTIME=container`)
 
 All agents run inside containers (lightweight Linux VMs), providing:
 - **Filesystem isolation**: Agents can only access mounted directories
@@ -748,7 +924,7 @@ WhatsApp messages could contain malicious instructions attempting to manipulate 
 **Recommendations:**
 - Only register trusted groups
 - Review additional directory mounts carefully
-- Review scheduled tasks periodically
+- Review scheduled jobs periodically
 - Monitor logs for unusual activity
 
 ### Credential Storage
@@ -774,7 +950,9 @@ chmod 700 groups/
 | Issue | Cause | Solution |
 |-------|-------|----------|
 | No response to messages | Service not running | Check `launchctl list | grep nanoclaw` |
-| "Claude Code process exited with code 1" | Container runtime failed to start | Check logs; NanoClaw auto-starts container runtime but may fail |
+| Startup fails at runtime preflight | Invalid `AGENT_RUNTIME` value | Set `AGENT_RUNTIME=host` or `AGENT_RUNTIME=container` |
+| Startup fails at runtime preflight | Container runtime unavailable in container mode | Start runtime and run `docker info` |
+| Startup fails at runtime preflight | Host runner artifacts missing/build failed in host mode | Run `npm --prefix container/agent-runner run build` |
 | "Claude Code process exited with code 1" | Session mount path wrong | Ensure mount is to `/home/node/.claude/` not `/root/.claude/` |
 | Session not continuing | Session ID not saved | Check SQLite: `sqlite3 store/messages.db "SELECT * FROM sessions"` |
 | Session not continuing | Mount path mismatch | Container user is `node` with HOME=/home/node; sessions must be at `/home/node/.claude/` |
@@ -790,7 +968,8 @@ chmod 700 groups/
 
 Run manually for verbose output:
 ```bash
-npm run dev
-# or
-node dist/index.js
+npm run dev:container
+npm run dev:host
+npm run start:container
+npm run start:host
 ```

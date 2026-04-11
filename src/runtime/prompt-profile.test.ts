@@ -90,6 +90,10 @@ describe('PromptProfileService', () => {
     );
     expect(prompt).toContain('## Identity');
     expect(prompt).toContain('## Tool Conventions');
+    expect(prompt).toContain('source: nanoclaw://personal-profile');
+    expect(prompt).toContain('source: nanoclaw://global-context');
+    expect(prompt).toContain('source: nanoclaw://group-context');
+    expect(prompt).not.toContain(root);
   });
 
   it('uses only expected CLAUDE sections and ignores extra persona files', () => {

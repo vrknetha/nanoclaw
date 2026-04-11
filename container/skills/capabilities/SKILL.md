@@ -39,18 +39,22 @@ Read the allowed tools from your SDK configuration. You always have access to:
 - **Web:** WebSearch, WebFetch
 - **Orchestration:** Task, TaskOutput, TaskStop, TeamCreate, TeamDelete, SendMessage
 - **Other:** TodoWrite, ToolSearch, Skill, NotebookEdit
-- **MCP:** mcp__nanoclaw__* (messaging, tasks, group management)
+- **MCP:** mcp__nanoclaw__* (messaging, scheduler jobs, group management)
 
 ### 3. MCP server tools
 
 The NanoClaw MCP server exposes these tools (via `mcp__nanoclaw__*` prefix):
 - `send_message` — send a message to the user/group
-- `schedule_task` — schedule a recurring or one-time task
-- `list_tasks` — list scheduled tasks
-- `pause_task` — pause a scheduled task
-- `resume_task` — resume a paused task
-- `cancel_task` — cancel and delete a task
-- `update_task` — update an existing task
+- `scheduler_upsert_job` — create/update a scheduler job
+- `scheduler_get_job` — fetch one job by id
+- `scheduler_list_jobs` — list scheduler jobs
+- `scheduler_update_job` — update mutable job fields
+- `scheduler_delete_job` — delete a job
+- `scheduler_pause_job` — pause a job
+- `scheduler_resume_job` — resume a paused job
+- `scheduler_trigger_job` — trigger immediate run
+- `scheduler_list_runs` — list recent runs
+- `scheduler_get_dead_letter` — list dead-lettered runs
 - `register_group` — register a new chat/group (main only)
 
 ### 4. Container skills (Bash tools)
@@ -84,7 +88,7 @@ Present the report as a clean, readable message. Example:
 • Core: Bash, Read, Write, Edit, Glob, Grep
 • Web: WebSearch, WebFetch
 • Orchestration: Task, TeamCreate, SendMessage
-• MCP: send_message, schedule_task, list_tasks, pause/resume/cancel/update_task, register_group
+• MCP: send_message, scheduler_upsert/get/list/update/delete/pause/resume/trigger/list_runs/get_dead_letter, register_group
 
 *Container Tools:*
 • agent-browser: ✓
@@ -97,4 +101,4 @@ Present the report as a clean, readable message. Example:
 
 Adapt the output based on what you actually find — don't list things that aren't installed.
 
-**See also:** `/status` for a quick health check of session, workspace, and tasks.
+**See also:** `/status` for a quick health check of session, workspace, and scheduler jobs.

@@ -3,12 +3,64 @@ import pluginJs from '@eslint/js'
 import tseslint from 'typescript-eslint'
 import noCatchAll from 'eslint-plugin-no-catch-all'
 
+const ROOT_WRAPPER_MODULES = [
+  'config',
+  'db',
+  'env',
+  'group-folder',
+  'logger',
+  'mount-security',
+  'router',
+  'sender-allowlist',
+  'timezone',
+  'types',
+]
+
+const wrapperMessage =
+  'Import from the split domain modules (core/storage/platform/messaging), not root wrappers.'
+
 export default [
   { ignores: ['node_modules/', 'dist/', 'container/', 'groups/'] },
   { files: ['src/**/*.{js,ts}'] },
   { languageOptions: { globals: globals.node } },
   pluginJs.configs.recommended,
   ...tseslint.configs.recommended,
+  {
+    files: ['src/**/*.{js,ts}', 'setup/**/*.{js,ts}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: [`../{${ROOT_WRAPPER_MODULES.join(',')}}.js`],
+              message: wrapperMessage,
+            },
+            {
+              group: [`../src/{${ROOT_WRAPPER_MODULES.join(',')}}.js`],
+              message: wrapperMessage,
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ['src/index.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: [`./{${ROOT_WRAPPER_MODULES.join(',')}}.js`],
+              message: wrapperMessage,
+            },
+          ],
+        },
+      ],
+    },
+  },
   {
     plugins: { 'no-catch-all': noCatchAll },
     rules: {

@@ -4,17 +4,17 @@ import path from 'path';
 
 import { Api, Bot } from 'grammy';
 
-import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
-import { readEnvFile } from '../env.js';
-import { resolveGroupFolderPath } from '../group-folder.js';
-import { logger } from '../logger.js';
+import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../core/config.js';
+import { readEnvFile } from '../core/env.js';
+import { resolveGroupFolderPath } from '../platform/group-folder.js';
+import { logger } from '../core/logger.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 import {
   Channel,
   OnChatMetadata,
   OnInboundMessage,
   RegisteredGroup,
-} from '../types.js';
+} from '../core/types.js';
 
 export interface TelegramChannelOpts {
   onMessage: OnInboundMessage;
@@ -329,7 +329,7 @@ export class TelegramChannel implements Channel {
         const msgId = ctx.message.message_id.toString();
         const filename =
           opts.filename ||
-          `${placeholder.replace(/[\[\] ]/g, '').toLowerCase()}_${msgId}`;
+          `${placeholder.replace(/[[\] ]/g, '').toLowerCase()}_${msgId}`;
         this.downloadFile(opts.fileId, group.folder, filename).then(
           (filePath) => {
             if (filePath) {

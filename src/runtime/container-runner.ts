@@ -6,6 +6,7 @@ import fs from 'fs';
 import path from 'path';
 
 import {
+  AGENT_MEMORY_ROOT,
   AGENT_RUNTIME,
   DATA_DIR,
   TIMEZONE,
@@ -34,8 +35,9 @@ import {
 } from './container-runner-types.js';
 
 export {
+  writeJobRunsSnapshot,
+  writeJobsSnapshot,
   writeGroupsSnapshot,
-  writeTasksSnapshot,
 } from './container-runner-snapshots.js';
 export type {
   AvailableGroup,
@@ -133,7 +135,11 @@ export async function runContainerAgent(
         group.folder,
         'extra',
       ),
+      NANOCLAW_IPC_DIR: hostRuntime.groupIpcDir,
       NANOCLAW_IPC_INPUT_DIR: path.join(hostRuntime.groupIpcDir, 'input'),
+      ...((AGENT_MEMORY_ROOT || '').trim()
+        ? { AGENT_MEMORY_ROOT: (AGENT_MEMORY_ROOT || '').trim() }
+        : {}),
     };
     if (modelConfig.model) {
       env.ANTHROPIC_MODEL = modelConfig.model;

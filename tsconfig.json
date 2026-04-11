@@ -3,6 +3,17 @@
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
+    "baseUrl": ".",
+    "paths": {
+      "@core/*": ["src/core/*"],
+      "@storage/*": ["src/storage/*"],
+      "@platform/*": ["src/platform/*"],
+      "@messaging/*": ["src/messaging/*"],
+      "@runtime/*": ["src/runtime/*"],
+      "@session/*": ["src/session/*"],
+      "@memory/*": ["src/memory/*"],
+      "@channels/*": ["src/channels/*"]
+    },
     "lib": ["ES2022"],
     "outDir": "./dist",
     "rootDir": "./src",

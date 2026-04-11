@@ -21,6 +21,8 @@ import {
   query,
   HookCallback,
   PreCompactHookInput,
+  type EffortLevel,
+  type ThinkingConfig,
 } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
 
@@ -30,10 +32,16 @@ interface ContainerInput {
   groupFolder: string;
   chatJid: string;
   isMain: boolean;
-  isScheduledTask?: boolean;
+  isScheduledJob?: boolean;
   assistantName?: string;
   script?: string;
   compiledSystemPrompt?: string;
+  thinking?: {
+    mode: 'adaptive' | 'enabled' | 'disabled';
+    effort?: EffortLevel;
+    budgetTokens?: number;
+    display?: 'summarized' | 'omitted';
+  };
 }
 
 interface ContainerOutput {
@@ -78,6 +86,7 @@ function buildSystemPrompt(append?: string):
       type: 'preset';
       preset: 'claude_code';
       append: string;
+      excludeDynamicSections: boolean;
     }
   | undefined {
   const trimmed = append?.trim();
@@ -86,6 +95,12 @@ function buildSystemPrompt(append?: string):
     type: 'preset',
     preset: 'claude_code',
     append: trimmed,
+    // Strip per-user dynamic sections (cwd, auto-memory path, git status)
+    // from the cached system prompt prefix. They are re-injected as the first
+    // user message so the model still sees them. This keeps the system prompt
+    // static and cacheable across agent spawns and groups that share the same
+    // CLAUDE.md content.
+    excludeDynamicSections: true,
   };
 }
 
@@ -170,6 +185,54 @@ function resolveConfiguredModel(): {
     return { model: claudeModel, source: 'CLAUDE_MODEL' };
   }
   return { source: 'unset' };
+}
+
+function resolveThinkingOptions(
+  thinkingOverride?: ContainerInput['thinking'],
+): {
+  thinking?: ThinkingConfig;
+  effort?: EffortLevel;
+  description: string;
+} {
+  if (!thinkingOverride) {
+    return {
+      thinking: { type: 'adaptive' },
+      effort: 'medium',
+      description: 'adaptive (effort medium)',
+    };
+  }
+
+  if (thinkingOverride.mode === 'disabled') {
+    return {
+      thinking: { type: 'disabled' },
+      description: 'disabled',
+    };
+  }
+
+  if (thinkingOverride.mode === 'enabled') {
+    return {
+      thinking: {
+        type: 'enabled',
+        budgetTokens: thinkingOverride.budgetTokens,
+        display: thinkingOverride.display,
+      },
+      description:
+        typeof thinkingOverride.budgetTokens === 'number'
+          ? `enabled (budget ${thinkingOverride.budgetTokens} tokens)`
+          : 'enabled',
+    };
+  }
+
+  return {
+    thinking: {
+      type: 'adaptive',
+      display: thinkingOverride.display,
+    },
+    effort: thinkingOverride.effort,
+    description: thinkingOverride.effort
+      ? `adaptive (effort ${thinkingOverride.effort})`
+      : 'adaptive',
+  };
 }
 
 type SessionSlashKind = 'compact' | 'model';
@@ -441,6 +504,8 @@ async function runQuery(
   containerInput: ContainerInput,
   sdkEnv: Record<string, string | undefined>,
   configuredModel: string | undefined,
+  queryThinking: ThinkingConfig | undefined,
+  queryEffort: EffortLevel | undefined,
   resumeAt?: string,
 ): Promise<{
   newSessionId?: string;
@@ -498,6 +563,8 @@ async function runQuery(
     prompt: stream,
     options: {
       model: configuredModel,
+      thinking: queryThinking,
+      effort: queryEffort,
       cwd: WORKSPACE_GROUP_DIR,
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
@@ -536,6 +603,9 @@ async function runQuery(
             NANOCLAW_CHAT_JID: containerInput.chatJid,
             NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
+            ...(process.env.NANOCLAW_IPC_DIR
+              ? { NANOCLAW_IPC_DIR: process.env.NANOCLAW_IPC_DIR }
+              : {}),
           },
         },
       },
@@ -583,6 +653,49 @@ async function runQuery(
       log(
         `Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`,
       );
+
+      // Log usage and prompt cache performance metrics
+      const resultMsg = message as {
+        total_cost_usd?: number;
+        num_turns?: number;
+        duration_ms?: number;
+        duration_api_ms?: number;
+        modelUsage?: Record<
+          string,
+          {
+            inputTokens: number;
+            outputTokens: number;
+            cacheReadInputTokens: number;
+            cacheCreationInputTokens: number;
+            costUSD: number;
+          }
+        >;
+      };
+      if (resultMsg.modelUsage) {
+        for (const [model, usage] of Object.entries(resultMsg.modelUsage)) {
+          const cacheRead = usage.cacheReadInputTokens || 0;
+          const cacheWrite = usage.cacheCreationInputTokens || 0;
+          const totalInput = usage.inputTokens || 0;
+          const cacheHitPct =
+            totalInput > 0
+              ? ((cacheRead / totalInput) * 100).toFixed(1)
+              : '0.0';
+          log(
+            `Usage [${model}]: input=${totalInput} output=${usage.outputTokens || 0} ` +
+              `cacheRead=${cacheRead} cacheWrite=${cacheWrite} ` +
+              `cacheHit=${cacheHitPct}% cost=$${(usage.costUSD || 0).toFixed(4)}`,
+          );
+        }
+      }
+      if (resultMsg.total_cost_usd !== undefined) {
+        log(
+          `Total: cost=$${resultMsg.total_cost_usd.toFixed(4)} ` +
+            `turns=${resultMsg.num_turns || 0} ` +
+            `duration=${resultMsg.duration_ms || 0}ms ` +
+            `apiTime=${resultMsg.duration_api_ms || 0}ms`,
+        );
+      }
+
       writeOutput({
         status: 'success',
         result: textResult || null,
@@ -676,6 +789,8 @@ interface SessionSlashRunOptions {
   sdkEnv: Record<string, string | undefined>;
   assistantName?: string;
   configuredModel?: string;
+  configuredThinking?: ThinkingConfig;
+  configuredEffort?: EffortLevel;
   systemPromptAppend?: string;
   silent?: boolean;
 }
@@ -708,6 +823,8 @@ async function runSessionSlashCommand(
       prompt: opts.command,
       options: {
         model: opts.configuredModel,
+        thinking: opts.configuredThinking,
+        effort: opts.configuredEffort,
         cwd: WORKSPACE_GROUP_DIR,
         resume: opts.sessionId,
         systemPrompt,
@@ -863,6 +980,7 @@ async function main(): Promise<void> {
   const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.js');
 
   const configuredModel = resolveConfiguredModel();
+  const configuredThinking = resolveThinkingOptions(containerInput.thinking);
   if (configuredModel.model) {
     log(
       `Configured model: ${configuredModel.model} (source: ${configuredModel.source})`,
@@ -870,6 +988,7 @@ async function main(): Promise<void> {
   } else {
     log('Configured model: CLI default (no ANTHROPIC_MODEL/CLAUDE_MODEL set)');
   }
+  log(`Configured thinking: ${configuredThinking.description}`);
 
   let sessionId = containerInput.sessionId;
   fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
@@ -884,8 +1003,8 @@ async function main(): Promise<void> {
   // Build initial prompt (drain any pending IPC messages too)
   let prompt = containerInput.prompt;
   const compiledSystemPrompt = containerInput.compiledSystemPrompt?.trim();
-  if (containerInput.isScheduledTask) {
-    prompt = `[SCHEDULED TASK - The following message was sent automatically and is not coming directly from the user or group.]\n\n${prompt}`;
+  if (containerInput.isScheduledJob) {
+    prompt = `[SCHEDULED JOB - The following message was sent automatically and is not coming directly from the user or group.]\n\n${prompt}`;
   }
   const pending = drainIpcInput();
   if (pending.length > 0) {
@@ -907,6 +1026,8 @@ async function main(): Promise<void> {
       sdkEnv,
       assistantName: containerInput.assistantName,
       configuredModel: configuredModel.model,
+      configuredThinking: configuredThinking.thinking,
+      configuredEffort: configuredThinking.effort,
       systemPromptAppend: compiledSystemPrompt,
       silent: true,
     });
@@ -936,6 +1057,8 @@ async function main(): Promise<void> {
       sdkEnv,
       assistantName: containerInput.assistantName,
       configuredModel: configuredModel.model,
+      configuredThinking: configuredThinking.thinking,
+      configuredEffort: configuredThinking.effort,
       systemPromptAppend: compiledSystemPrompt,
     });
 
@@ -951,8 +1074,8 @@ async function main(): Promise<void> {
   // --- End session slash handling ---
 
   // Script phase: run script before waking agent
-  if (containerInput.script && containerInput.isScheduledTask) {
-    log('Running task script...');
+  if (containerInput.script && containerInput.isScheduledJob) {
+    log('Running scheduler job script...');
     const scriptResult = await runScript(containerInput.script);
 
     if (!scriptResult || !scriptResult.wakeAgent) {
@@ -969,7 +1092,7 @@ async function main(): Promise<void> {
 
     // Script says wake agent — enrich prompt with script data
     log(`Script wakeAgent=true, enriching prompt with data`);
-    prompt = `[SCHEDULED TASK]\n\nScript output:\n${JSON.stringify(scriptResult.data, null, 2)}\n\nInstructions:\n${containerInput.prompt}`;
+    prompt = `[SCHEDULED JOB]\n\nScript output:\n${JSON.stringify(scriptResult.data, null, 2)}\n\nInstructions:\n${containerInput.prompt}`;
   }
 
   // Query loop: run query → wait for IPC message → run new query → repeat
@@ -987,6 +1110,8 @@ async function main(): Promise<void> {
         containerInput,
         sdkEnv,
         configuredModel.model,
+        configuredThinking.thinking,
+        configuredThinking.effort,
         resumeAt,
       );
       if (queryResult.newSessionId) {

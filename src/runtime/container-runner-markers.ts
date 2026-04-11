@@ -1,0 +1,2 @@
+export const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
+export const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';

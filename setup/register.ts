@@ -7,10 +7,10 @@
 import fs from 'fs';
 import path from 'path';
 
-import { STORE_DIR } from '../src/config.ts';
-import { initDatabase, setRegisteredGroup } from '../src/db.ts';
-import { isValidGroupFolder } from '../src/group-folder.ts';
-import { logger } from '../src/logger.ts';
+import { STORE_DIR } from '../src/core/config.js';
+import { logger } from '../src/core/logger.js';
+import { isValidGroupFolder } from '../src/platform/group-folder.js';
+import { initDatabase, setRegisteredGroup } from '../src/storage/db.js';
 import { emitStatus } from './status.ts';
 
 interface RegisterArgs {

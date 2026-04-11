@@ -69,7 +69,7 @@ Then run `/setup`. Claude Code handles everything: dependencies, authentication,
 - **Multi-channel messaging** - Talk to your assistant from WhatsApp, Telegram, Discord, Slack, or Gmail. Add channels with skills like `/add-whatsapp` or `/add-telegram`. Run one or many at the same time.
 - **Isolated group context** - Each group has its own `CLAUDE.md` memory, isolated filesystem, and runs in its own container sandbox with only that filesystem mounted to it.
 - **Main channel** - Your private channel (self-chat) for admin control; every group is completely isolated
-- **Scheduled tasks** - Recurring jobs that run Claude and can message you back
+- **Scheduled jobs** - Recurring jobs that run Claude and can message you back
 - **Web access** - Search and fetch content from the Web
 - **Container isolation** - Agents are sandboxed in Docker (macOS/Linux), [Docker Sandboxes](docs/docker-sandboxes.md) (micro VM isolation), or Apple Container (macOS)
 - **Credential security** - Agents never hold raw API keys. Outbound requests route through [OneCLI's Agent Vault](https://github.com/onecli/onecli), which injects credentials at request time and enforces per-agent policies and rate limits.
@@ -86,10 +86,10 @@ Talk to your assistant with the trigger word (default: `@Andy`):
 @Andy every Monday at 8am, compile news on AI developments from Hacker News and TechCrunch and message me a briefing
 ```
 
-From the main channel (your self-chat), you can manage groups and tasks:
+From the main channel (your self-chat), you can manage groups and jobs:
 ```
-@Andy list all scheduled tasks across groups
-@Andy pause the Monday briefing task
+@Andy list all scheduled jobs across groups
+@Andy pause the Monday briefing job
 @Andy join the Family Chat group
 ```
 
@@ -100,6 +100,7 @@ Use these as standalone messages:
 ```text
 /compact
 /new
+/runtime
 /model
 /model opus
 /model claude-opus-4-1-20250805
@@ -107,6 +108,7 @@ Use these as standalone messages:
 ```
 
 - `/new` starts a fresh session for the current group and archives the previous transcript to `groups/<group-folder>/conversations/`.
+- `/runtime` shows active runtime mode, runtime health, and concrete fix steps when unhealthy.
 - `/model <value>` only persists the override when the switch succeeds (invalid values are rejected and the existing override is kept).
 
 ## Customizing
@@ -145,6 +147,19 @@ Skills we'd like to see:
 - [Apple Container](https://github.com/apple/container) (macOS) or [Docker](https://docker.com/products/docker-desktop) (macOS/Linux) for default isolated runtime
 
 If you choose `AGENT_RUNTIME=host`, container runtime is not required.
+`AGENT_RUNTIME` is strict: only `host` or `container` are valid values. Invalid values fail startup with remediation instructions.
+
+### Runtime Commands
+
+```bash
+# Container runtime (default isolation)
+npm run dev:container
+npm run start:container
+
+# Host runtime (OpenClaw-style access)
+npm run dev:host
+npm run start:host
+```
 
 ## Architecture
 
@@ -152,19 +167,19 @@ If you choose `AGENT_RUNTIME=host`, container runtime is not required.
 Channels --> SQLite --> Polling loop --> Container (Claude Agent SDK) --> Response
 ```
 
-Single Node.js process. Channels are added via skills and self-register at startup — the orchestrator connects whichever ones have credentials present. By default, agents execute in isolated Linux containers with filesystem isolation. Optional host runtime mode (`AGENT_RUNTIME=host`) runs agents directly on the host for OpenClaw-style access. Per-group message queue with concurrency control. IPC via filesystem.
+Single Node.js process. Channels are added via skills and self-register at startup — the orchestrator connects whichever ones have credentials present. By default, agents execute in isolated Linux containers with filesystem isolation. Optional host runtime mode (`AGENT_RUNTIME=host`) runs agents directly on the host for OpenClaw-style access. Runtime selection is global and strict (`host|container`), with no automatic fallback. Per-group message queue with concurrency control. IPC via filesystem.
 
 For the full architecture details, see the [documentation site](https://docs.nanoclaw.dev/concepts/architecture).
 
 Key files:
 - `src/index.ts` - Orchestrator: state, message loop, agent invocation
 - `src/channels/registry.ts` - Channel registry (self-registration at startup)
-- `src/ipc.ts` - IPC watcher and task processing
-- `src/router.ts` - Message formatting and outbound routing
-- `src/group-queue.ts` - Per-group queue with global concurrency limit
-- `src/container-runner.ts` - Spawns streaming agent containers
-- `src/task-scheduler.ts` - Runs scheduled tasks
-- `src/db.ts` - SQLite operations (messages, groups, sessions, state)
+- `src/runtime/ipc.ts` - IPC watcher and scheduler job processing
+- `src/messaging/router.ts` - Message formatting and outbound routing
+- `src/runtime/group-queue.ts` - Per-group queue with global concurrency limit
+- `src/runtime/container-runner.ts` - Spawns streaming agent containers
+- `src/runtime/task-scheduler.ts` - Runs scheduled jobs
+- `src/storage/db.ts` - SQLite operations (messages, groups, sessions, state)
 - `groups/*/CLAUDE.md` - Per-group memory
 
 ## Factory Mode (Optional)
@@ -193,9 +208,11 @@ Yes. Set:
 
 ```bash
 AGENT_RUNTIME=host
+# or use
+npm run dev:host
 ```
 
-This bypasses container isolation and runs the agent process directly on your machine. Use it only if you explicitly want host-level tool access.
+This bypasses container isolation and runs the agent process directly on your machine. Use it only if you explicitly want host-level tool access. NanoClaw does not auto-fallback between host and container modes.
 
 **Can I run this on Linux or Windows?**
 
@@ -236,6 +253,7 @@ ANTHROPIC_MODEL=opus
 To switch an existing group session mid-conversation, use the session command:
 
 ```text
+/runtime
 /model
 /model opus
 /model claude-opus-4-1-20250805
@@ -244,6 +262,7 @@ To switch an existing group session mid-conversation, use the session command:
 
 `/model` changes are per-group and persist after successful switches.
 Use `/new` to clear session history for the current group while keeping model override behavior unchanged.
+Use `/runtime` to inspect runtime mode/health and remediation steps from chat.
 
 **How do I debug issues?**
 

@@ -11,9 +11,13 @@ import path from 'path';
 
 import Database from 'better-sqlite3';
 
-import { STORE_DIR } from '../src/config.js';
-import { readEnvFile } from '../src/env.js';
-import { logger } from '../src/logger.js';
+import { AGENT_RUNTIME, STORE_DIR } from '../src/core/config.js';
+import { readEnvFile } from '../src/core/env.js';
+import { logger } from '../src/core/logger.js';
+import {
+  collectRuntimeDiagnostics,
+  formatRuntimeDiagnosticsMessage,
+} from '../src/runtime/runtime-diagnostics.js';
 import {
   getPlatform,
   getServiceManager,
@@ -82,19 +86,11 @@ export async function run(_args: string[]): Promise<void> {
   }
   logger.info({ service }, 'Service status');
 
-  // 2. Check container runtime
-  let containerRuntime = 'none';
-  try {
-    execSync('command -v container', { stdio: 'ignore' });
-    containerRuntime = 'apple-container';
-  } catch {
-    try {
-      execSync('docker info', { stdio: 'ignore' });
-      containerRuntime = 'docker';
-    } catch {
-      // No runtime
-    }
-  }
+  // 2. Check selected runtime health using shared runtime diagnostics.
+  const runtimeDiagnostics = await collectRuntimeDiagnostics();
+  const runtimeSummary = formatRuntimeDiagnosticsMessage(runtimeDiagnostics)
+    .replace(/\s+/g, ' ')
+    .trim();
 
   // 3. Check credentials
   let credentials = 'missing';
@@ -168,6 +164,7 @@ export async function run(_args: string[]): Promise<void> {
   // Determine overall status
   const status =
     service === 'running' &&
+    runtimeDiagnostics.ok &&
     credentials !== 'missing' &&
     anyChannelConfigured &&
     registeredGroups > 0
@@ -178,7 +175,12 @@ export async function run(_args: string[]): Promise<void> {
 
   emitStatus('VERIFY', {
     SERVICE: service,
-    CONTAINER_RUNTIME: containerRuntime,
+    AGENT_RUNTIME: AGENT_RUNTIME,
+    CONTAINER_RUNTIME: runtimeDiagnostics.details.runtimeBinary,
+    RUNTIME_OK: runtimeDiagnostics.ok,
+    RUNTIME_ERRORS: runtimeDiagnostics.errors.join(' | '),
+    RUNTIME_FIXES: runtimeDiagnostics.fixes.join(' | '),
+    RUNTIME_SUMMARY: runtimeSummary,
     CREDENTIALS: credentials,
     CONFIGURED_CHANNELS: configuredChannels.join(','),
     CHANNEL_AUTH: JSON.stringify(channelAuth),

@@ -11,7 +11,7 @@
 
 ## Security Boundaries
 
-### 1. Container Isolation (Primary Boundary)
+### 1. Container Isolation (Primary Boundary in `AGENT_RUNTIME=container`)
 
 Agents execute in containers (lightweight Linux VMs), providing:
 - **Process isolation** - Container processes cannot affect the host
@@ -19,7 +19,11 @@ Agents execute in containers (lightweight Linux VMs), providing:
 - **Non-root execution** - Runs as unprivileged `node` user (uid 1000)
 - **Ephemeral containers** - Fresh environment per invocation (`--rm`)
 
-This is the primary security boundary. Rather than relying on application-level permission checks, the attack surface is limited by what's mounted.
+In `AGENT_RUNTIME=container`, this is the primary security boundary. Rather than relying on application-level permission checks, the attack surface is limited by what's mounted.
+
+### 1b. Host Runtime (`AGENT_RUNTIME=host`)
+
+Host mode is intentionally high-trust. The agent process runs directly on the host and bypasses container isolation. Use host mode only when you explicitly need host-level tool and filesystem access.
 
 ### 2. Mount Security
 
@@ -53,24 +57,24 @@ Each group has isolated Claude sessions at `data/sessions/{group}/.claude/`:
 
 ### 4. IPC Authorization
 
-Messages and task operations are verified against group identity:
+Messages and scheduler operations are verified against group identity:
 
 | Operation | Main Group | Non-Main Group |
 |-----------|------------|----------------|
 | Send message to own chat | ✓ | ✓ |
 | Send message to other chats | ✓ | ✗ |
-| Schedule task for self | ✓ | ✓ |
-| Schedule task for others | ✓ | ✗ |
-| View all tasks | ✓ | Own only |
+| Schedule job for self | ✓ | ✓ |
+| Schedule job for others | ✓ | ✗ |
+| View all jobs | ✓ | Own only |
 | Manage other groups | ✓ | ✗ |
 
 ### 5. Credential Isolation (OneCLI Agent Vault)
 
-Real API credentials **never enter containers**. NanoClaw uses [OneCLI's Agent Vault](https://github.com/onecli/onecli) to proxy outbound requests and inject credentials at the gateway level.
+In container mode, real API credentials **never enter containers**. NanoClaw uses [OneCLI's Agent Vault](https://github.com/onecli/onecli) to proxy outbound requests and inject credentials at the gateway level.
 
 **How it works:**
 1. Credentials are registered once with `onecli secrets create`, stored and managed by OneCLI
-2. When NanoClaw spawns a container, it calls `applyContainerConfig()` to route outbound HTTPS through the OneCLI gateway
+2. When NanoClaw spawns a container, it applies OneCLI gateway settings so outbound HTTPS routes through the proxy
 3. The gateway matches requests by host and path, injects the real credential, and forwards
 4. Agents cannot discover real credentials — not in environment, stdin, files, or `/proc`
 

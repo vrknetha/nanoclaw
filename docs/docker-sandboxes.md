@@ -132,7 +132,7 @@ Add these `--build-arg` flags to the `docker build` command:
 
 ### 4c. Container runner — proxy forwarding, CA cert mount, /dev/null fix
 
-Three changes to `src/container-runner.ts`:
+Three changes to `src/runtime/container-runner.ts`:
 
 **Replace `/dev/null` shadow mount.** The sandbox rejects `/dev/null` bind mounts. Find where `.env` is shadow-mounted to `/dev/null` and replace it with an empty file:
 
@@ -160,7 +160,7 @@ if (caCertSrc) {
 
 ### 4d. Container runtime — prevent self-termination
 
-In `src/container-runtime.ts`, the `cleanupOrphans()` function matches containers by the `nanoclaw-` prefix. Inside a sandbox, the sandbox container itself may match (e.g., `nanoclaw-docker-sandbox`). Filter out the current hostname:
+In `src/runtime/container-runtime.ts`, the `cleanupOrphans()` function matches containers by the `nanoclaw-` prefix. Inside a sandbox, the sandbox container itself may match (e.g., `nanoclaw-docker-sandbox`). Filter out the current hostname:
 
 ```typescript
 // In cleanupOrphans(), filter out os.hostname() from the list of containers to stop

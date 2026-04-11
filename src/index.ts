@@ -12,15 +12,17 @@ import {
   getRegisteredChannelNames,
 } from './channels/registry.js';
 import {
+  writeJobRunsSnapshot,
+  writeJobsSnapshot,
   writeGroupsSnapshot,
-  writeTasksSnapshot,
 } from './runtime/container-runner.js';
 import {
+  getAllJobs,
   getAllChats,
   getAllRegisteredGroups,
+  getRecentJobRuns,
   getAllSessions,
   deleteSession,
-  getAllTasks,
   getLastBotMessageTimestamp,
   getRouterState,
   initDatabase,
@@ -32,6 +34,7 @@ import {
 } from './storage/db.js';
 import { GroupQueue } from './runtime/group-queue.js';
 import { startIpcWatcher } from './runtime/ipc.js';
+import { writeSchedulerStateFileSafe } from './runtime/scheduler-state-file.js';
 import { findChannel, formatOutbound } from './messaging/router.js';
 import { restoreRemoteControl } from './runtime/remote-control.js';
 import {
@@ -49,12 +52,18 @@ import {
   startMessagePollingLoop,
 } from './runtime/message-loop.js';
 import { startSchedulerLoop } from './runtime/task-scheduler.js';
-import { Channel, NewMessage, RegisteredGroup } from './core/types.js';
+import {
+  Channel,
+  NewMessage,
+  RegisteredGroup,
+  ThinkingOverride,
+} from './core/types.js';
 import { logger } from './core/logger.js';
 import {
   listAvailableGroups,
   registerGroup as registerGroupEntry,
   setGroupModelOverride as setGroupModelOverrideEntry,
+  setGroupThinkingOverride as setGroupThinkingOverrideEntry,
 } from './runtime/group-registry.js';
 import { createGroupProcessor } from './runtime/group-processing.js';
 import { runRuntimeStartupPreflight } from './runtime/runtime-diagnostics.js';
@@ -151,6 +160,18 @@ function setGroupModelOverride(
   );
 }
 
+function setGroupThinkingOverride(
+  chatJid: string,
+  thinking: ThinkingOverride | undefined,
+): void {
+  setGroupThinkingOverrideEntry(
+    registeredGroups,
+    chatJid,
+    thinking,
+    setRegisteredGroup,
+  );
+}
+
 export function getAvailableGroups(): import('./runtime/container-runner.js').AvailableGroup[] {
   return listAvailableGroups(getAllChats(), registeredGroups);
 }
@@ -180,6 +201,7 @@ const groupProcessor = createGroupProcessor({
   },
   saveState,
   setGroupModelOverride,
+  setGroupThinkingOverride,
   getAvailableGroups,
   getRegisteredJids: () => new Set(Object.keys(registeredGroups)),
   queue: {
@@ -285,6 +307,39 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  const syncSchedulerState = () => {
+    const jobs = getAllJobs();
+    const runs = getRecentJobRuns(500);
+    writeSchedulerStateFileSafe(jobs, runs);
+
+    const jobRows = jobs.map((job) => ({
+      id: job.id,
+      name: job.name,
+      prompt: job.prompt,
+      script: job.script || undefined,
+      schedule_type: job.schedule_type,
+      schedule_value: job.schedule_value,
+      status: job.status,
+      group_scope: job.group_scope,
+      linked_sessions: job.linked_sessions,
+      next_run: job.next_run,
+      created_by: job.created_by,
+      created_at: job.created_at,
+      updated_at: job.updated_at,
+      timeout_ms: job.timeout_ms,
+      max_retries: job.max_retries,
+      retry_backoff_ms: job.retry_backoff_ms,
+      max_consecutive_failures: job.max_consecutive_failures,
+      consecutive_failures: job.consecutive_failures,
+      pause_reason: job.pause_reason,
+    }));
+    for (const group of Object.values(registeredGroups)) {
+      const isMain = group.isMain === true;
+      writeJobsSnapshot(group.folder, isMain, jobRows);
+      writeJobRunsSnapshot(group.folder, isMain, runs, jobRows);
+    }
+  };
+
   startSchedulerLoop({
     registeredGroups: () => registeredGroups,
     getSessions: () => sessions,
@@ -300,6 +355,7 @@ async function main(): Promise<void> {
       const text = formatOutbound(rawText);
       if (text) await channel.sendMessage(jid, text);
     },
+    onSchedulerChanged: syncSchedulerState,
   });
   startIpcWatcher({
     sendMessage: (jid, text) => {
@@ -319,23 +375,9 @@ async function main(): Promise<void> {
     getAvailableGroups,
     writeGroupsSnapshot: (gf, im, ag, rj) =>
       writeGroupsSnapshot(gf, im, ag, rj),
-    onTasksChanged: () => {
-      const tasks = getAllTasks();
-      const taskRows = tasks.map((t) => ({
-        id: t.id,
-        groupFolder: t.group_folder,
-        prompt: t.prompt,
-        script: t.script || undefined,
-        schedule_type: t.schedule_type,
-        schedule_value: t.schedule_value,
-        status: t.status,
-        next_run: t.next_run,
-      }));
-      for (const group of Object.values(registeredGroups)) {
-        writeTasksSnapshot(group.folder, group.isMain === true, taskRows);
-      }
-    },
+    onSchedulerChanged: syncSchedulerState,
   });
+  syncSchedulerState();
   startSessionCleanup();
   queue.setProcessMessagesFn(processGroupMessages);
   recoverPendingMessages({

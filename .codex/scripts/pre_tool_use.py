@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 
 from factory_lib import read_hook_input
@@ -9,6 +10,12 @@ from factory_lib import read_hook_input
 payload = read_hook_input()
 command = ((payload.get("tool_input") or {}).get("command") or "").strip()
 command_lower = command.lower()
+enforce_verify = os.environ.get("FACTORY_ENFORCE_VERIFY", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 blocked = [
     r"\brm\s+-rf\b",
     r"\bgit\s+reset\s+--hard\b",
@@ -41,11 +48,22 @@ check_bypass = [
     "npx tsc --noemit",
 ]
 if any(token in command_lower for token in check_bypass) and ".codex/scripts/verify.py" not in command:
+    if enforce_verify:
+        print(json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": "Use `python3 .codex/scripts/verify.py` so verification artifacts stay deterministic.",
+            }
+        }))
+        raise SystemExit(0)
     print(json.dumps({
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
-            "permissionDecision": "deny",
-            "permissionDecisionReason": "Use `python3 .codex/scripts/verify.py` so verification artifacts stay deterministic.",
+            "additionalContext": (
+                "Direct verification commands are allowed. "
+                "Run `python3 .codex/scripts/verify.py` before final review or PR-ready so `.factory/verify.json` stays current."
+            ),
         }
     }))
     raise SystemExit(0)

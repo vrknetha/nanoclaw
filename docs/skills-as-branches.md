@@ -273,7 +273,7 @@ Users make custom changes directly on their main branch. This is the standard fo
 
 ```bash
 # Make changes
-vim src/config.ts
+vim src/core/config.ts
 git commit -am "change trigger word to @Bob"
 git push origin main
 ```

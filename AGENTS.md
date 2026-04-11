@@ -7,11 +7,11 @@ Messages are ingested from channels, persisted in SQLite, then routed to Codex a
 
 Primary surfaces:
 - `src/index.ts`: orchestrator loop and runtime wiring
-- `src/group-queue.ts`: per-group queue and retry behavior
-- `src/container-runner.ts`: container execution path
-- `src/container-runtime.ts`: host/container runtime selection and health checks
-- `src/session-commands.ts`: host-managed slash commands (`/compact`, `/new`, `/model`)
-- `src/db.ts`: persistence for groups/messages/tasks/sessions
+- `src/runtime/group-queue.ts`: per-group queue and retry behavior
+- `src/runtime/container-runner.ts`: container execution path
+- `src/runtime/container-runtime.ts`: host/container runtime selection and health checks
+- `src/session/session-commands.ts`: host-managed slash commands (`/compact`, `/new`, `/model`)
+- `src/storage/db.ts`: persistence for groups/messages/tasks/sessions
 
 ## Mandatory Read Order
 
