@@ -26,17 +26,9 @@ export interface RunContainerAgentOptions {
   timeoutMs?: number;
 }
 
-export interface VolumeMount {
-  hostPath: string;
-  containerPath: string;
-  readonly: boolean;
-}
-
 export interface HostRuntimeContext {
   groupDir: string;
   globalDir?: string;
-  groupSessionRoot: string;
-  groupSessionsDir: string;
   groupIpcDir: string;
 }
 
@@ -91,11 +83,9 @@ export interface RunnerProcessSpec {
   onProcess: (proc: ChildProcess, containerName: string) => void;
   onOutput?: (output: ContainerOutput) => Promise<void>;
   options?: RunContainerAgentOptions;
-  runtime: 'host' | 'container';
   runnerLabel: string;
   processName: string;
   startTime: number;
   logsDir: string;
   runtimeDetails: string[];
-  mounts: VolumeMount[];
 }

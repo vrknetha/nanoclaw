@@ -3,16 +3,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const ORIGINAL_ENV = { ...process.env };
 
 async function loadConfigWithEnv(env: {
-  AGENT_RUNTIME?: string;
   ANTHROPIC_MODEL?: string;
   CLAUDE_MODEL?: string;
 }) {
   vi.resetModules();
-  if (env.AGENT_RUNTIME === undefined) {
-    delete process.env.AGENT_RUNTIME;
-  } else {
-    process.env.AGENT_RUNTIME = env.AGENT_RUNTIME;
-  }
   if (env.ANTHROPIC_MODEL === undefined) {
     delete process.env.ANTHROPIC_MODEL;
   } else {
@@ -30,7 +24,6 @@ async function loadConfigWithEnv(env: {
 }
 
 afterEach(() => {
-  delete process.env.AGENT_RUNTIME;
   delete process.env.ANTHROPIC_MODEL;
   delete process.env.CLAUDE_MODEL;
   for (const [key, value] of Object.entries(ORIGINAL_ENV)) {
@@ -80,21 +73,3 @@ describe('model config precedence', () => {
   });
 });
 
-describe('agent runtime config', () => {
-  it('defaults to container runtime when unset', async () => {
-    const cfg = await loadConfigWithEnv({});
-    expect(cfg.AGENT_RUNTIME).toBe('container');
-  });
-
-  it('uses host runtime when AGENT_RUNTIME=host', async () => {
-    const cfg = await loadConfigWithEnv({ AGENT_RUNTIME: 'host' });
-    expect(cfg.AGENT_RUNTIME).toBe('host');
-    expect(cfg.AGENT_RUNTIME_INVALID).toBeUndefined();
-  });
-
-  it('marks unsupported AGENT_RUNTIME values as invalid', async () => {
-    const cfg = await loadConfigWithEnv({ AGENT_RUNTIME: 'something-else' });
-    expect(cfg.AGENT_RUNTIME).toBe('container');
-    expect(cfg.AGENT_RUNTIME_INVALID).toBe('something-else');
-  });
-});

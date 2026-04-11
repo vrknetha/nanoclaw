@@ -1,24 +1,25 @@
 import fs from 'fs';
 import path from 'path';
 
-import { DATA_DIR } from '../core/config.js';
+import { NANOCLAW_CONFIG_DIR } from '../core/config.js';
 
 const CLAUDE_SESSION_SETTINGS = {
   env: {
-    // Enable agent swarms (subagent orchestration)
-    // https://code.claude.com/docs/en/agent-teams#orchestrate-teams-of-claude-code-sessions
     CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
-    // Prompt bootstrap is assembled by NanoClaw; keep implicit directory loading off.
     CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '0',
-    // Enable Claude's memory feature (persists user preferences between sessions)
-    // https://code.claude.com/docs/en/memory#manage-auto-memory
     CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
   },
 };
 
-export function ensureGroupSessionSettings(groupSessionsDir: string): void {
-  fs.mkdirSync(groupSessionsDir, { recursive: true });
-  const settingsFile = path.join(groupSessionsDir, 'settings.json');
+/**
+ * Ensure shared .claude/settings.json under NANOCLAW_CONFIG_DIR.
+ * This is the single HOME for all agent processes.
+ */
+export function ensureSharedSessionSettings(): void {
+  const claudeDir = path.join(NANOCLAW_CONFIG_DIR, '.claude');
+  fs.mkdirSync(claudeDir, { recursive: true });
+  const settingsFile = path.join(claudeDir, 'settings.json');
+
   let existingSettings: unknown = {};
   if (fs.existsSync(settingsFile)) {
     try {
@@ -47,16 +48,47 @@ export function ensureGroupSessionSettings(groupSessionsDir: string): void {
   fs.writeFileSync(settingsFile, JSON.stringify(merged, null, 2) + '\n');
 }
 
-export function syncGroupSkills(groupSessionsDir: string): void {
+/**
+ * Ensure ~/.config/nanoclaw/.claude/skills/ exists as a real directory.
+ * In dev mode (container/skills/ source present), seed new or updated
+ * skill folders into it. User-added skills are never removed.
+ * In production (no source), just ensures the directory exists.
+ */
+export function syncGroupSkills(): void {
+  const skillsDst = path.join(NANOCLAW_CONFIG_DIR, '.claude', 'skills');
+
+  // Migrate legacy symlink to a real directory
+  try {
+    const stat = fs.lstatSync(skillsDst);
+    if (stat.isSymbolicLink()) {
+      fs.unlinkSync(skillsDst);
+    }
+  } catch {
+    // doesn't exist yet
+  }
+
+  fs.mkdirSync(skillsDst, { recursive: true });
+
+  // Dev mode: seed skills from source (container/skills/)
   const skillsSrc = path.join(process.cwd(), 'container', 'skills');
-  const skillsDst = path.join(groupSessionsDir, 'skills');
   if (!fs.existsSync(skillsSrc)) return;
 
-  for (const skillDir of fs.readdirSync(skillsSrc)) {
-    const srcDir = path.join(skillsSrc, skillDir);
-    if (!fs.statSync(srcDir).isDirectory()) continue;
-    const dstDir = path.join(skillsDst, skillDir);
-    fs.cpSync(srcDir, dstDir, { recursive: true });
+  for (const entry of fs.readdirSync(skillsSrc, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const src = path.join(skillsSrc, entry.name);
+    const dst = path.join(skillsDst, entry.name);
+    const srcMarker = path.join(src, 'SKILL.md');
+    const dstMarker = path.join(dst, 'SKILL.md');
+
+    // Copy if skill doesn't exist at destination, or source is newer
+    const needsCopy =
+      !fs.existsSync(dstMarker) ||
+      (fs.existsSync(srcMarker) &&
+        fs.statSync(srcMarker).mtimeMs > fs.statSync(dstMarker).mtimeMs);
+
+    if (needsCopy) {
+      fs.cpSync(src, dst, { recursive: true });
+    }
   }
 }
 
@@ -68,35 +100,3 @@ export function ensureGroupIpcLayout(groupIpcDir: string): void {
   fs.mkdirSync(path.join(groupIpcDir, 'memory-responses'), { recursive: true });
 }
 
-export function syncGroupAgentRunnerSource(groupFolder: string): string {
-  const projectRoot = process.cwd();
-  const agentRunnerSrc = path.join(
-    projectRoot,
-    'container',
-    'agent-runner',
-    'src',
-  );
-  const groupAgentRunnerDir = path.join(
-    DATA_DIR,
-    'sessions',
-    groupFolder,
-    'agent-runner-src',
-  );
-
-  if (!fs.existsSync(agentRunnerSrc)) {
-    return groupAgentRunnerDir;
-  }
-
-  const srcIndex = path.join(agentRunnerSrc, 'index.ts');
-  const cachedIndex = path.join(groupAgentRunnerDir, 'index.ts');
-  const needsCopy =
-    !fs.existsSync(groupAgentRunnerDir) ||
-    !fs.existsSync(cachedIndex) ||
-    (fs.existsSync(srcIndex) &&
-      fs.statSync(srcIndex).mtimeMs > fs.statSync(cachedIndex).mtimeMs);
-  if (needsCopy) {
-    fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
-  }
-
-  return groupAgentRunnerDir;
-}

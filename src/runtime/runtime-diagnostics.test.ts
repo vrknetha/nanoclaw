@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockExecSync = vi.fn();
 const mockExistsSync = vi.fn();
-const mockCleanupOrphans = vi.fn();
 
 vi.mock('child_process', () => ({
   execSync: (...args: unknown[]) => mockExecSync(...args),
@@ -15,24 +14,15 @@ vi.mock('fs', () => ({
 }));
 
 async function loadRuntimeDiagnosticsModule(config: {
-  AGENT_RUNTIME: 'host' | 'container';
-  AGENT_RUNTIME_RAW?: string;
-  AGENT_RUNTIME_INVALID?: string;
   ONECLI_URL?: string;
   envVars?: Record<string, string | undefined>;
 }) {
   vi.resetModules();
   vi.doMock('../core/config.js', () => ({
-    AGENT_RUNTIME: config.AGENT_RUNTIME,
-    AGENT_RUNTIME_RAW: config.AGENT_RUNTIME_RAW || config.AGENT_RUNTIME,
-    AGENT_RUNTIME_INVALID: config.AGENT_RUNTIME_INVALID,
     ONECLI_URL: config.ONECLI_URL || '',
   }));
   vi.doMock('../core/env.js', () => ({
     readEnvFile: () => config.envVars || {},
-  }));
-  vi.doMock('./container-runtime.js', () => ({
-    cleanupOrphans: (...args: unknown[]) => mockCleanupOrphans(...args),
   }));
   return import('./runtime-diagnostics.js');
 }
@@ -47,38 +37,28 @@ afterEach(() => {
 });
 
 describe('runtime-diagnostics', () => {
-  it('reports healthy container runtime when docker check passes', async () => {
-    mockExecSync.mockReturnValue('');
+  it('reports healthy when host artifacts exist', async () => {
     const mod = await loadRuntimeDiagnosticsModule({
-      AGENT_RUNTIME: 'container',
+      ONECLI_URL: 'http://localhost:10254',
+      envVars: { CLAUDE_CODE_OAUTH_TOKEN: 'token' },
     });
 
     const diagnostics = await mod.collectRuntimeDiagnostics();
 
-    expect(diagnostics.mode).toBe('container');
     expect(diagnostics.ok).toBe(true);
     expect(diagnostics.errors).toEqual([]);
-    expect(mockExecSync).toHaveBeenCalledWith('docker info', {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 10000,
-    });
   });
 
-  it('reports unhealthy container runtime when docker check fails', async () => {
-    mockExecSync.mockImplementation(() => {
-      throw new Error('cannot connect');
-    });
-    const mod = await loadRuntimeDiagnosticsModule({
-      AGENT_RUNTIME: 'container',
-    });
+  it('reports unhealthy when host artifacts missing', async () => {
+    mockExistsSync.mockImplementation(
+      (pathValue: string) => pathValue === process.execPath,
+    );
+    const mod = await loadRuntimeDiagnosticsModule({});
 
     const diagnostics = await mod.collectRuntimeDiagnostics();
 
     expect(diagnostics.ok).toBe(false);
-    expect(diagnostics.errors.join(' ')).toContain(
-      'Container runtime check failed',
-    );
-    expect(diagnostics.fixes.join(' ')).toContain('docker info');
+    expect(diagnostics.errors.join(' ')).toContain('artifacts');
   });
 
   it('auto-builds host runner artifacts during startup preflight', async () => {
@@ -91,7 +71,6 @@ describe('runtime-diagnostics', () => {
       );
     });
     const mod = await loadRuntimeDiagnosticsModule({
-      AGENT_RUNTIME: 'host',
       ONECLI_URL: 'http://localhost:10254',
       envVars: { CLAUDE_CODE_OAUTH_TOKEN: 'token' },
     });
@@ -107,7 +86,6 @@ describe('runtime-diagnostics', () => {
         timeout: 300000,
       },
     );
-    expect(mockCleanupOrphans).not.toHaveBeenCalled();
   });
 
   it('fails startup preflight when host auto-build fails', async () => {
@@ -120,29 +98,18 @@ describe('runtime-diagnostics', () => {
     mockExistsSync.mockImplementation(
       (pathValue: string) => pathValue === process.execPath,
     );
-    const mod = await loadRuntimeDiagnosticsModule({
-      AGENT_RUNTIME: 'host',
-    });
+    const mod = await loadRuntimeDiagnosticsModule({});
 
     await expect(mod.runRuntimeStartupPreflight()).rejects.toThrow(
       'Runtime preflight failed',
     );
   });
 
-  it('flags invalid AGENT_RUNTIME values as hard errors', async () => {
-    mockExecSync.mockReturnValue('');
-    const mod = await loadRuntimeDiagnosticsModule({
-      AGENT_RUNTIME: 'container',
-      AGENT_RUNTIME_RAW: 'weird',
-      AGENT_RUNTIME_INVALID: 'weird',
-    });
+  it('warns when no credentials are configured', async () => {
+    const mod = await loadRuntimeDiagnosticsModule({});
 
     const diagnostics = await mod.collectRuntimeDiagnostics();
 
-    expect(diagnostics.ok).toBe(false);
-    expect(diagnostics.errors.join(' ')).toContain(
-      'Invalid AGENT_RUNTIME value',
-    );
-    expect(diagnostics.fixes.join(' ')).toContain('AGENT_RUNTIME=host');
+    expect(diagnostics.warnings.join(' ')).toContain('No credentials');
   });
 });

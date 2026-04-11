@@ -1,8 +1,41 @@
 import crypto from 'crypto';
 
-import { MEMORY_EMBED_MODEL } from '../core/config.js';
+import {
+  MEMORY_EMBED_MODEL,
+  OPENAI_DAILY_EMBED_LIMIT,
+} from '../core/config.js';
+import { logger } from '../core/logger.js';
 import type { MemoryProvider } from './memory-provider.js';
 import type { EmbeddingProvider } from './memory-embeddings.js';
+
+let dailyApiCalls = 0;
+let dailyResetDate = new Date().toDateString();
+
+function trackAndCheckBudget(callCount: number): boolean {
+  const today = new Date().toDateString();
+  if (today !== dailyResetDate) {
+    dailyApiCalls = 0;
+    dailyResetDate = today;
+  }
+
+  if (
+    OPENAI_DAILY_EMBED_LIMIT > 0 &&
+    dailyApiCalls + callCount > OPENAI_DAILY_EMBED_LIMIT
+  ) {
+    logger.warn(
+      {
+        dailyApiCalls,
+        dailyLimit: OPENAI_DAILY_EMBED_LIMIT,
+        requestedCalls: callCount,
+      },
+      'Daily embed limit reached. Skipping API call',
+    );
+    return false;
+  }
+
+  dailyApiCalls += callCount;
+  return true;
+}
 
 export class CachedEmbeddingProvider implements EmbeddingProvider {
   constructor(
@@ -26,6 +59,10 @@ export class CachedEmbeddingProvider implements EmbeddingProvider {
     const hash = hashText(text);
     const cached = this.store.getCachedEmbedding(hash, this.model);
     if (cached) return cached;
+
+    if (!trackAndCheckBudget(1)) {
+      throw new Error('Daily embed budget exceeded');
+    }
 
     const embedding = await this.inner.embedOne(text);
     this.store.putCachedEmbedding(hash, this.model, embedding);
@@ -58,6 +95,9 @@ export class CachedEmbeddingProvider implements EmbeddingProvider {
     if (misses.size > 0) {
       const missEntries = [...misses.entries()];
       const missingTexts = missEntries.map(([, value]) => value.text);
+      if (!trackAndCheckBudget(missingTexts.length)) {
+        throw new Error('Daily embed budget exceeded');
+      }
       const embeddings = await this.inner.embedMany(missingTexts);
 
       if (embeddings.length !== missEntries.length) {

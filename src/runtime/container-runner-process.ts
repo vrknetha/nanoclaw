@@ -3,12 +3,11 @@ import fs from 'fs';
 import path from 'path';
 
 import {
-  CONTAINER_MAX_OUTPUT_SIZE,
-  CONTAINER_TIMEOUT,
+  AGENT_MAX_OUTPUT_SIZE,
+  AGENT_TIMEOUT,
   IDLE_TIMEOUT,
 } from '../core/config.js';
 import { logger } from '../core/logger.js';
-import { stopContainer } from './container-runtime.js';
 import {
   OUTPUT_END_MARKER,
   OUTPUT_START_MARKER,
@@ -47,13 +46,11 @@ export function executeRunnerProcess(
     onProcess,
     onOutput,
     options,
-    runtime,
     runnerLabel,
     processName,
     startTime,
     logsDir,
     runtimeDetails,
-    mounts,
   } = spec;
 
   return new Promise((resolve) => {
@@ -78,7 +75,7 @@ export function executeRunnerProcess(
     let timedOut = false;
     let hadStreamingOutput = false;
     const configuredTimeout =
-      options?.timeoutMs ?? group.containerConfig?.timeout ?? CONTAINER_TIMEOUT;
+      options?.timeoutMs ?? group.containerConfig?.timeout ?? AGENT_TIMEOUT;
     const timeoutMs =
       options?.timeoutMs != null
         ? configuredTimeout
@@ -87,20 +84,9 @@ export function executeRunnerProcess(
     const killOnTimeout = () => {
       timedOut = true;
       logger.error(
-        { group: group.name, runtime, processName },
+        { group: group.name, processName },
         `${runnerLabel} timeout, stopping`,
       );
-      if (runtime === 'container') {
-        try {
-          stopContainer(processName);
-          return;
-        } catch (err) {
-          logger.warn(
-            { group: group.name, processName, err },
-            'Graceful stop failed, force killing',
-          );
-        }
-      }
       runner.kill('SIGKILL');
     };
 
@@ -114,13 +100,13 @@ export function executeRunnerProcess(
       const chunk = data.toString();
 
       if (!stdoutTruncated) {
-        const remaining = CONTAINER_MAX_OUTPUT_SIZE - stdout.length;
+        const remaining = AGENT_MAX_OUTPUT_SIZE - stdout.length;
         if (chunk.length > remaining) {
           stdout += chunk.slice(0, remaining);
           stdoutTruncated = true;
           logger.warn(
             { group: group.name, size: stdout.length },
-            'Container stdout truncated due to size limit',
+            'Agent stdout truncated due to size limit',
           );
         } else {
           stdout += chunk;
@@ -161,16 +147,16 @@ export function executeRunnerProcess(
       const chunk = data.toString();
       const lines = chunk.trim().split('\n');
       for (const line of lines) {
-        if (line) logger.debug({ container: group.folder }, line);
+        if (line) logger.debug({ agent: group.folder }, line);
       }
       if (stderrTruncated) return;
-      const remaining = CONTAINER_MAX_OUTPUT_SIZE - stderr.length;
+      const remaining = AGENT_MAX_OUTPUT_SIZE - stderr.length;
       if (chunk.length > remaining) {
         stderr += chunk.slice(0, remaining);
         stderrTruncated = true;
         logger.warn(
           { group: group.name, size: stderr.length },
-          'Container stderr truncated due to size limit',
+          'Agent stderr truncated due to size limit',
         );
       } else {
         stderr += chunk;
@@ -190,7 +176,6 @@ export function executeRunnerProcess(
             `=== Agent Run Log (TIMEOUT) ===`,
             `Timestamp: ${new Date().toISOString()}`,
             `Group: ${group.name}`,
-            `Runtime: ${runtime}`,
             `Process: ${processName}`,
             `Duration: ${duration}ms`,
             `Exit Code: ${code}`,
@@ -200,7 +185,7 @@ export function executeRunnerProcess(
 
         if (hadStreamingOutput) {
           logger.info(
-            { group: group.name, runtime, processName, duration, code },
+            { group: group.name, processName, duration, code },
             `${runnerLabel} timed out after output (idle cleanup)`,
           );
           outputChain.then(() => {
@@ -214,7 +199,7 @@ export function executeRunnerProcess(
         }
 
         logger.error(
-          { group: group.name, runtime, processName, duration, code },
+          { group: group.name, processName, duration, code },
           `${runnerLabel} timed out with no output`,
         );
 
@@ -235,7 +220,6 @@ export function executeRunnerProcess(
         `=== Agent Run Log ===`,
         `Timestamp: ${new Date().toISOString()}`,
         `Group: ${group.name}`,
-        `Runtime: ${runtime}`,
         `IsMain: ${input.isMain}`,
         `Duration: ${duration}ms`,
         `Exit Code: ${code}`,
@@ -276,23 +260,18 @@ export function executeRunnerProcess(
           `Session ID: ${input.sessionId || 'new'}`,
           ``,
           `=== Runtime Details ===`,
-          runtime === 'container'
-            ? mounts
-                .map((m) => `${m.containerPath}${m.readonly ? ' (ro)' : ''}`)
-                .join('\n')
-            : runtimeDetails.join('\n'),
+          runtimeDetails.join('\n'),
           ``,
         );
       }
 
       fs.writeFileSync(logFile, logLines.join('\n'));
-      logger.debug({ logFile, verbose: isVerbose }, 'Container log written');
+      logger.debug({ logFile, verbose: isVerbose }, 'Agent log written');
 
       if (code !== 0) {
         logger.error(
           {
             group: group.name,
-            runtime,
             code,
             duration,
             stderr,
@@ -313,7 +292,7 @@ export function executeRunnerProcess(
       if (onOutput) {
         outputChain.then(() => {
           logger.info(
-            { group: group.name, runtime, duration, newSessionId },
+            { group: group.name, duration, newSessionId },
             `${runnerLabel} completed (streaming mode)`,
           );
           resolve({
@@ -331,7 +310,6 @@ export function executeRunnerProcess(
         logger.info(
           {
             group: group.name,
-            runtime,
             duration,
             status: output.status,
             hasResult: !!output.result,
@@ -344,7 +322,6 @@ export function executeRunnerProcess(
         logger.error(
           {
             group: group.name,
-            runtime,
             stdout,
             stderr,
             error: err,
@@ -363,7 +340,7 @@ export function executeRunnerProcess(
     runner.on('error', (err) => {
       clearTimeout(timeout);
       logger.error(
-        { group: group.name, runtime, processName, error: err },
+        { group: group.name, processName, error: err },
         `${runnerLabel} spawn error`,
       );
       resolve({

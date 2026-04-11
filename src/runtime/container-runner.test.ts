@@ -2,17 +2,15 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 import { PassThrough } from 'stream';
 
-// Sentinel markers must match container-runner.ts
+// Sentinel markers must match container-runner-markers.ts
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
 
 // Mock config
 vi.mock('../core/config.js', () => ({
   AGENT_MEMORY_ROOT: '/tmp/nanoclaw-agent-memory',
-  AGENT_RUNTIME: 'container',
-  CONTAINER_IMAGE: 'nanoclaw-agent:latest',
-  CONTAINER_MAX_OUTPUT_SIZE: 10485760,
-  CONTAINER_TIMEOUT: 1800000, // 30min
+  AGENT_MAX_OUTPUT_SIZE: 10485760,
+  AGENT_TIMEOUT: 1800000, // 30min
   DATA_DIR: '/tmp/nanoclaw-test-data',
   GROUPS_DIR: '/tmp/nanoclaw-test-groups',
   IDLE_TIMEOUT: 1800000, // 30min
@@ -43,7 +41,7 @@ vi.mock('fs', async () => {
     ...actual,
     default: {
       ...actual,
-      existsSync: vi.fn(() => false),
+      existsSync: vi.fn(() => true),
       mkdirSync: vi.fn(),
       writeFileSync: vi.fn(),
       readFileSync: vi.fn(() => ''),
@@ -54,28 +52,30 @@ vi.mock('fs', async () => {
   };
 });
 
-// Mock mount-security
-vi.mock('../platform/mount-security.js', () => ({
-  validateAdditionalMounts: vi.fn(() => []),
+// Mock container-runner-host to avoid real filesystem operations
+vi.mock('./container-runner-host.js', () => ({
+  getHostRuntimeCredentialEnv: vi.fn().mockResolvedValue({
+    env: {},
+    onecliApplied: false,
+  }),
+  prepareHostRuntimeContext: vi.fn(() => ({
+    groupDir: '/tmp/nanoclaw-test-data/groups/test-group',
+    groupIpcDir: '/tmp/nanoclaw-test-data/ipc/test-group',
+  })),
 }));
 
-// Mock container-runtime
-vi.mock('./container-runtime.js', () => ({
-  CONTAINER_RUNTIME_BIN: 'docker',
-  hostGatewayArgs: () => [],
-  readonlyMountArgs: (h: string, c: string) => ['-v', `${h}:${c}:ro`],
-  stopContainer: vi.fn(),
+// Mock prompt-profile
+vi.mock('./prompt-profile.js', () => ({
+  getPromptProfileService: vi.fn(() => ({
+    compileSystemPrompt: vi.fn(() => ''),
+  })),
 }));
 
-// Mock OneCLI SDK
-vi.mock('@onecli-sh/sdk', () => ({
-  OneCLI: class {
-    applyContainerConfig = vi.fn().mockResolvedValue(true);
-    createAgent = vi.fn().mockResolvedValue({ id: 'test' });
-    ensureAgent = vi
-      .fn()
-      .mockResolvedValue({ name: 'test', identifier: 'test', created: true });
-  },
+// Mock platform
+vi.mock('../platform/group-folder.js', () => ({
+  resolveGroupFolderPath: vi.fn(
+    (folder: string) => `/tmp/nanoclaw-test-data/groups/${folder}`,
+  ),
 }));
 
 // Create a controllable fake ChildProcess
@@ -104,20 +104,10 @@ vi.mock('child_process', async () => {
   return {
     ...actual,
     spawn: vi.fn(() => fakeProc),
-    exec: vi.fn(
-      (_cmd: string, _opts: unknown, cb?: (err: Error | null) => void) => {
-        if (cb) cb(null);
-        return new EventEmitter();
-      },
-    ),
   };
 });
 
-import {
-  runContainerAgent,
-  ContainerOutput,
-  _normalizeHostRuntimeEnvForTests,
-} from './container-runner.js';
+import { runContainerAgent, ContainerOutput } from './container-runner.js';
 import { getEffectiveModelConfig } from '../core/config.js';
 import { spawn } from 'child_process';
 import type { RegisteredGroup } from '../core/types.js';
@@ -178,7 +168,7 @@ describe('container-runner timeout behavior', () => {
     // Fire the hard timeout (IDLE_TIMEOUT + 30s = 1830000ms)
     await vi.advanceTimersByTimeAsync(1830000);
 
-    // Emit close event (as if container was stopped by the timeout)
+    // Emit close event (as if process was killed by the timeout)
     fakeProc.emit('close', 137);
 
     // Let the promise resolve
@@ -243,7 +233,11 @@ describe('container-runner timeout behavior', () => {
     expect(result.newSessionId).toBe('session-456');
   });
 
-  it('passes effective model to container env when configured', async () => {
+  it('passes effective model to process env when configured', async () => {
+    vi.mocked(getEffectiveModelConfig).mockReturnValue({
+      model: 'opus',
+      source: 'group.containerConfig.model' as const,
+    });
     const groupWithModel: RegisteredGroup = {
       ...testGroup,
       containerConfig: { model: 'opus' },
@@ -262,13 +256,16 @@ describe('container-runner timeout behavior', () => {
     expect(vi.mocked(getEffectiveModelConfig)).toHaveBeenCalledWith('opus');
     const spawnCalls = vi.mocked(spawn).mock.calls;
     expect(spawnCalls.length).toBeGreaterThan(0);
-    const args = spawnCalls[spawnCalls.length - 1][1] as string[];
-    const joinedArgs = args.join(' ');
-    expect(joinedArgs).toContain('ANTHROPIC_MODEL=opus');
-    expect(joinedArgs).toContain('CLAUDE_MODEL=opus');
+    // Host mode passes model via env, not args
+    const env = spawnCalls[spawnCalls.length - 1][2]?.env as Record<
+      string,
+      string
+    >;
+    expect(env.ANTHROPIC_MODEL).toBe('opus');
+    expect(env.CLAUDE_MODEL).toBe('opus');
   });
 
-  it('mounts AGENT_MEMORY_ROOT and forwards it to the runner env', async () => {
+  it('forwards AGENT_MEMORY_ROOT via env when configured', async () => {
     const resultPromise = runContainerAgent(testGroup, testInput, () => {});
     await vi.advanceTimersByTimeAsync(10);
     fakeProc.emit('close', 0);
@@ -277,35 +274,10 @@ describe('container-runner timeout behavior', () => {
 
     const spawnCalls = vi.mocked(spawn).mock.calls;
     expect(spawnCalls.length).toBeGreaterThan(0);
-    const args = spawnCalls[spawnCalls.length - 1][1] as string[];
-    const joinedArgs = args.join(' ');
-    expect(joinedArgs).toContain(
-      '/tmp/nanoclaw-agent-memory:/workspace/agent-memory',
-    );
-    expect(joinedArgs).toContain('AGENT_MEMORY_ROOT=/workspace/agent-memory');
-  });
-
-  it('rewrites docker-host proxy aliases for host runtime env', () => {
-    const env = _normalizeHostRuntimeEnvForTests({
-      HTTPS_PROXY: 'http://x:secret@host.docker.internal:10255',
-      HTTP_PROXY: 'http://gateway.docker.internal:10255',
-      ANTHROPIC_BASE_URL: 'https://host.docker.internal/v1',
-      CLAUDE_CODE_OAUTH_TOKEN: 'token',
-    });
-
-    expect(env.HTTPS_PROXY).toBe('http://x:secret@127.0.0.1:10255/');
-    expect(env.HTTP_PROXY).toBe('http://127.0.0.1:10255/');
-    expect(env.ANTHROPIC_BASE_URL).toBe('https://127.0.0.1/v1');
-    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('token');
-  });
-
-  it('leaves non-docker hosts unchanged when normalizing host env', () => {
-    const env = _normalizeHostRuntimeEnvForTests({
-      HTTPS_PROXY: 'http://proxy.example.com:3128',
-      ANTHROPIC_BASE_URL: 'https://api.anthropic.com',
-    });
-
-    expect(env.HTTPS_PROXY).toBe('http://proxy.example.com:3128');
-    expect(env.ANTHROPIC_BASE_URL).toBe('https://api.anthropic.com');
+    const env = spawnCalls[spawnCalls.length - 1][2]?.env as Record<
+      string,
+      string
+    >;
+    expect(env.AGENT_MEMORY_ROOT).toBe('/tmp/nanoclaw-agent-memory');
   });
 });

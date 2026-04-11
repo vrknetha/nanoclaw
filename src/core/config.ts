@@ -10,13 +10,13 @@ const envConfig = readEnvFile([
   'ASSISTANT_HAS_OWN_NUMBER',
   'ONECLI_URL',
   'TZ',
-  'AGENT_RUNTIME',
   'ANTHROPIC_MODEL',
   'CLAUDE_MODEL',
   'MEMORY_SQLITE_PATH',
   'MEMORY_PROVIDER',
   'AGENT_MEMORY_ROOT',
   'OPENAI_API_KEY',
+  'OPENAI_DAILY_EMBED_LIMIT',
   'MEMORY_EMBED_MODEL',
   'MEMORY_EMBED_PROVIDER',
   'MEMORY_CHUNK_SIZE',
@@ -145,6 +145,15 @@ function parseSourceTypeBoosts(
 
 export const OPENAI_API_KEY =
   process.env.OPENAI_API_KEY || envConfig.OPENAI_API_KEY || null;
+export const OPENAI_DAILY_EMBED_LIMIT = Math.max(
+  0,
+  parseInt(
+    process.env.OPENAI_DAILY_EMBED_LIMIT ||
+      envConfig.OPENAI_DAILY_EMBED_LIMIT ||
+      '500',
+    10,
+  ),
+); // 0 = unlimited
 export const MEMORY_EMBED_MODEL =
   process.env.MEMORY_EMBED_MODEL ||
   envConfig.MEMORY_EMBED_MODEL ||
@@ -494,30 +503,12 @@ export const MEMORY_CONSOLIDATION_MAX_CLUSTERS = Math.max(
   ) || 10,
 );
 
-export const CONTAINER_IMAGE =
-  process.env.CONTAINER_IMAGE || 'nanoclaw-agent:latest';
-export type AgentRuntime = 'container' | 'host';
-
-function normalizeAgentRuntime(value?: string): AgentRuntime | null {
-  const normalized = value?.trim().toLowerCase();
-  if (!normalized) return 'container';
-  if (normalized === 'host') return 'host';
-  if (normalized === 'container') return 'container';
-  return null;
-}
-
-export const AGENT_RUNTIME_RAW =
-  process.env.AGENT_RUNTIME || envConfig.AGENT_RUNTIME;
-const resolvedAgentRuntime = normalizeAgentRuntime(AGENT_RUNTIME_RAW);
-export const AGENT_RUNTIME_INVALID =
-  resolvedAgentRuntime === null ? AGENT_RUNTIME_RAW : undefined;
-export const AGENT_RUNTIME = resolvedAgentRuntime ?? 'container';
-export const CONTAINER_TIMEOUT = parseInt(
-  process.env.CONTAINER_TIMEOUT || '1800000',
+export const AGENT_TIMEOUT = parseInt(
+  process.env.AGENT_TIMEOUT || process.env.CONTAINER_TIMEOUT || '1800000',
   10,
 );
-export const CONTAINER_MAX_OUTPUT_SIZE = parseInt(
-  process.env.CONTAINER_MAX_OUTPUT_SIZE || '10485760',
+export const AGENT_MAX_OUTPUT_SIZE = parseInt(
+  process.env.AGENT_MAX_OUTPUT_SIZE || process.env.CONTAINER_MAX_OUTPUT_SIZE || '10485760',
   10,
 ); // 10MB default
 export const ONECLI_URL = process.env.ONECLI_URL || envConfig.ONECLI_URL;

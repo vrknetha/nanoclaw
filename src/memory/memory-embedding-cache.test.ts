@@ -77,4 +77,38 @@ describe('CachedEmbeddingProvider', () => {
     expect(secondPass).toEqual([[5], [4]]);
     expect(embedManyCalls).toBe(1);
   });
+
+  it('enforces daily embed budget only on uncached API calls', async () => {
+    let embedManyCalls = 0;
+    const inner = {
+      isEnabled: () => true,
+      validateConfiguration: () => undefined,
+      embedMany: async (texts: string[]) => {
+        embedManyCalls += 1;
+        return texts.map((text) => [text.length]);
+      },
+      embedOne: async (text: string) => [text.length],
+    } satisfies EmbeddingProvider;
+
+    const cache = new Map<string, number[]>();
+    const store = {
+      getCachedEmbedding: (textHash: string, model: string) =>
+        cache.get(`${model}:${textHash}`) || null,
+      putCachedEmbedding: (
+        textHash: string,
+        model: string,
+        embedding: number[],
+      ) => {
+        cache.set(`${model}:${textHash}`, embedding);
+      },
+    };
+
+    const provider = new CachedEmbeddingProvider(inner, store, 'test-model');
+    await expect(
+      provider.embedMany(
+        Array.from({ length: 10_000 }, (_, index) => `value-${index}`),
+      ),
+    ).rejects.toThrow(/Daily embed budget exceeded/);
+    expect(embedManyCalls).toBe(0);
+  });
 });

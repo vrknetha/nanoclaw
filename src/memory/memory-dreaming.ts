@@ -77,9 +77,9 @@ export async function runDreamingSweep(
   }
 
   const groupStats: GroupStats = {
-    maxRetrievalCount: Math.max(
+    maxRetrievalCount: items.reduce(
+      (max, item) => Math.max(max, item.retrieval_count),
       1,
-      ...items.map((item) => item.retrieval_count),
     ),
     totalItems: items.length,
   };

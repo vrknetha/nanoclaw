@@ -2,14 +2,13 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { ensureGroupSessionSettings } from './container-runner-layout.js';
-
-describe('ensureGroupSessionSettings', () => {
+describe('ensureSharedSessionSettings', () => {
   const roots: string[] = [];
 
   afterEach(() => {
+    vi.restoreAllMocks();
     while (roots.length > 0) {
       const root = roots.pop();
       if (!root) continue;
@@ -17,13 +16,13 @@ describe('ensureGroupSessionSettings', () => {
     }
   });
 
-  it('updates existing settings file to enforce deterministic env keys', () => {
+  it('updates existing settings file to enforce deterministic env keys', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-layout-'));
     roots.push(root);
 
-    const groupSessionsDir = path.join(root, '.claude');
-    fs.mkdirSync(groupSessionsDir, { recursive: true });
-    const settingsPath = path.join(groupSessionsDir, 'settings.json');
+    const claudeDir = path.join(root, '.claude');
+    fs.mkdirSync(claudeDir, { recursive: true });
+    const settingsPath = path.join(claudeDir, 'settings.json');
 
     fs.writeFileSync(
       settingsPath,
@@ -40,7 +39,16 @@ describe('ensureGroupSessionSettings', () => {
       ),
     );
 
-    ensureGroupSessionSettings(groupSessionsDir);
+    // Mock NANOCLAW_CONFIG_DIR to point to our temp root
+    vi.doMock('../core/config.js', () => ({
+      NANOCLAW_CONFIG_DIR: root,
+      DATA_DIR: root,
+    }));
+
+    const { ensureSharedSessionSettings } = await import(
+      './container-runner-layout.js'
+    );
+    ensureSharedSessionSettings();
 
     const updated = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as {
       env: Record<string, string>;
