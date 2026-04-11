@@ -239,20 +239,6 @@ export function storeChatMetadata(
   }
 }
 
-/**
- * Update chat name without changing timestamp for existing chats.
- * New chats get the current time as their initial timestamp.
- * Used during group metadata sync.
- */
-export function updateChatName(chatJid: string, name: string): void {
-  db.prepare(
-    `
-    INSERT INTO chats (jid, name, last_message_time) VALUES (?, ?, ?)
-    ON CONFLICT(jid) DO UPDATE SET name = excluded.name
-  `,
-  ).run(chatJid, name, new Date().toISOString());
-}
-
 export interface ChatInfo {
   jid: string;
   name: string;
@@ -277,27 +263,6 @@ export function getAllChats(): ChatInfo[] {
 }
 
 /**
- * Get timestamp of last group metadata sync.
- */
-export function getLastGroupSync(): string | null {
-  // Store sync time in a special chat entry
-  const row = db
-    .prepare(`SELECT last_message_time FROM chats WHERE jid = '__group_sync__'`)
-    .get() as { last_message_time: string } | undefined;
-  return row?.last_message_time || null;
-}
-
-/**
- * Record that group metadata was synced.
- */
-export function setLastGroupSync(): void {
-  const now = new Date().toISOString();
-  db.prepare(
-    `INSERT OR REPLACE INTO chats (jid, name, last_message_time) VALUES ('__group_sync__', '__group_sync__', ?)`,
-  ).run(now);
-}
-
-/**
  * Store a message with full content.
  * Only call this for registered groups where message history is needed.
  */
@@ -316,33 +281,6 @@ export function storeMessage(msg: NewMessage): void {
     msg.reply_to_message_id ?? null,
     msg.reply_to_message_content ?? null,
     msg.reply_to_sender_name ?? null,
-  );
-}
-
-/**
- * Store a message directly.
- */
-export function storeMessageDirect(msg: {
-  id: string;
-  chat_jid: string;
-  sender: string;
-  sender_name: string;
-  content: string;
-  timestamp: string;
-  is_from_me: boolean;
-  is_bot_message?: boolean;
-}): void {
-  db.prepare(
-    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    msg.id,
-    msg.chat_jid,
-    msg.sender,
-    msg.sender_name,
-    msg.content,
-    msg.timestamp,
-    msg.is_from_me ? 1 : 0,
-    msg.is_bot_message ? 1 : 0,
   );
 }
 
@@ -521,37 +459,11 @@ export function getJobById(id: string): Job | undefined {
   return row ? mapJobRow(row) : undefined;
 }
 
-export function listJobs(filter?: {
-  groupScope?: string;
-  statuses?: Job['status'][];
-  linkedSession?: string;
-}): Job[] {
-  const clauses: string[] = [];
-  const values: unknown[] = [];
-  if (filter?.groupScope) {
-    clauses.push('group_scope = ?');
-    values.push(filter.groupScope);
-  }
-  if (filter?.statuses && filter.statuses.length > 0) {
-    clauses.push(`status IN (${filter.statuses.map(() => '?').join(', ')})`);
-    values.push(...filter.statuses);
-  }
-  if (filter?.linkedSession) {
-    clauses.push('linked_sessions LIKE ?');
-    values.push(`%"${filter.linkedSession}"%`);
-  }
-
-  const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
-  return db
-    .prepare(
-      `SELECT * FROM jobs ${where} ORDER BY updated_at DESC, created_at DESC`,
-    )
-    .all(...values)
-    .map((row) => mapJobRow(row as RawJobRow));
-}
-
 export function getAllJobs(): Job[] {
-  return listJobs();
+  return db
+    .prepare('SELECT * FROM jobs ORDER BY updated_at DESC, created_at DESC')
+    .all()
+    .map((row) => mapJobRow(row as RawJobRow));
 }
 
 export function getRecentJobRuns(limit: number = 200): JobRun[] {

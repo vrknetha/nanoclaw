@@ -45,9 +45,8 @@ describe('ensureSharedSessionSettings', () => {
       DATA_DIR: root,
     }));
 
-    const { ensureSharedSessionSettings } = await import(
-      './container-runner-layout.js'
-    );
+    const { ensureSharedSessionSettings } =
+      await import('./container-runner-layout.js');
     ensureSharedSessionSettings();
 
     const updated = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as {

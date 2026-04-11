@@ -174,7 +174,7 @@ export async function runDreamingSweep(
   return result;
 }
 
-export function computePromotionScore(
+function computePromotionScore(
   item: MemoryItem,
   groupStats: GroupStats,
   uniqueQueries = uniqueQueryCount(item),
@@ -215,11 +215,11 @@ export function computePromotionScore(
   };
 }
 
-export function uniqueQueryCount(item: MemoryItem): number {
+function uniqueQueryCount(item: MemoryItem): number {
   return new Set(parseStringArray(item.query_hashes_json)).size;
 }
 
-export function computeRecencyScore(
+function computeRecencyScore(
   lastRetrievedAt: string | null,
   windowDays: number,
 ): number {

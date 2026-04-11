@@ -72,4 +72,3 @@ describe('model config precedence', () => {
     });
   });
 });
-

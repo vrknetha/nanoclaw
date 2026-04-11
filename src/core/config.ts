@@ -7,7 +7,6 @@ import { isValidTimezone } from './timezone.js';
 // Read config values from .env (falls back to process.env).
 const envConfig = readEnvFile([
   'ASSISTANT_NAME',
-  'ASSISTANT_HAS_OWN_NUMBER',
   'ONECLI_URL',
   'TZ',
   'ANTHROPIC_MODEL',
@@ -64,9 +63,6 @@ const envConfig = readEnvFile([
 
 export const ASSISTANT_NAME =
   process.env.ASSISTANT_NAME || envConfig.ASSISTANT_NAME || 'Andy';
-export const ASSISTANT_HAS_OWN_NUMBER =
-  (process.env.ASSISTANT_HAS_OWN_NUMBER ||
-    envConfig.ASSISTANT_HAS_OWN_NUMBER) === 'true';
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
 
@@ -75,11 +71,6 @@ const PROJECT_ROOT = process.cwd();
 const HOME_DIR = process.env.HOME || os.homedir();
 export const NANOCLAW_CONFIG_DIR = path.join(HOME_DIR, '.config', 'nanoclaw');
 
-// Mount security: allowlist stored OUTSIDE project root, never mounted into containers
-export const MOUNT_ALLOWLIST_PATH = path.join(
-  NANOCLAW_CONFIG_DIR,
-  'mount-allowlist.json',
-);
 export const SENDER_ALLOWLIST_PATH = path.join(
   NANOCLAW_CONFIG_DIR,
   'sender-allowlist.json',
@@ -508,7 +499,9 @@ export const AGENT_TIMEOUT = parseInt(
   10,
 );
 export const AGENT_MAX_OUTPUT_SIZE = parseInt(
-  process.env.AGENT_MAX_OUTPUT_SIZE || process.env.CONTAINER_MAX_OUTPUT_SIZE || '10485760',
+  process.env.AGENT_MAX_OUTPUT_SIZE ||
+    process.env.CONTAINER_MAX_OUTPUT_SIZE ||
+    '10485760',
   10,
 ); // 10MB default
 export const ONECLI_URL = process.env.ONECLI_URL || envConfig.ONECLI_URL;

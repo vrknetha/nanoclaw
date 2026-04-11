@@ -30,7 +30,6 @@ export interface RuntimeDiagnosticsOptions {
   autoBuildHostRunner?: boolean;
 }
 
-let cachedDiagnostics: RuntimeDiagnostics | null = null;
 
 function summarizeExecError(err: unknown): string {
   if (!(err instanceof Error)) return String(err);
@@ -172,12 +171,7 @@ export async function collectRuntimeDiagnostics(
     },
   };
 
-  cachedDiagnostics = diagnostics;
   return diagnostics;
-}
-
-export function getCachedRuntimeDiagnostics(): RuntimeDiagnostics | null {
-  return cachedDiagnostics;
 }
 
 export function formatRuntimeDiagnosticsMessage(
@@ -226,7 +220,7 @@ export function formatRuntimeDiagnosticsMessage(
   return lines.join('\n');
 }
 
-export function formatRuntimeFailureMessage(
+function formatRuntimeFailureMessage(
   diagnostics: RuntimeDiagnostics,
 ): string {
   return [

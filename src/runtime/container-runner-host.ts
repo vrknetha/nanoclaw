@@ -3,7 +3,12 @@ import path from 'path';
 
 import { OneCLI } from '@onecli-sh/sdk';
 
-import { DATA_DIR, GROUPS_DIR, NANOCLAW_CONFIG_DIR, ONECLI_URL } from '../core/config.js';
+import {
+  DATA_DIR,
+  GROUPS_DIR,
+  NANOCLAW_CONFIG_DIR,
+  ONECLI_URL,
+} from '../core/config.js';
 import { readEnvFile } from '../core/env.js';
 import { logger } from '../core/logger.js';
 import { RegisteredGroup } from '../core/types.js';
@@ -60,9 +65,13 @@ export async function getHostRuntimeCredentialEnv(
         fs.mkdirSync(path.dirname(config.caCertificateContainerPath), {
           recursive: true,
         });
-        fs.writeFileSync(config.caCertificateContainerPath, config.caCertificate, {
-          mode: 0o600,
-        });
+        fs.writeFileSync(
+          config.caCertificateContainerPath,
+          config.caCertificate,
+          {
+            mode: 0o600,
+          },
+        );
         onecliCaPath = config.caCertificateContainerPath;
       } catch (err) {
         logger.warn(
