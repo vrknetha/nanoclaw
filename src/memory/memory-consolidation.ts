@@ -1,3 +1,5 @@
+import Anthropic from '@anthropic-ai/sdk';
+
 import {
   MEMORY_CONSOLIDATION_MODEL,
   MEMORY_RETENTION_PIN_THRESHOLD,
@@ -258,23 +260,20 @@ async function tryMergeWithAnthropic(
   ].join('\n');
 
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2024-10-22',
-      },
-      body: JSON.stringify({
+    const client = new Anthropic({
+      apiKey,
+      // Resolve fetch at call-time so tests can mock global fetch.
+      fetch: globalThis.fetch,
+    });
+    const response = await client.messages
+      .create({
         model,
         max_tokens: 500,
         temperature: 0,
         messages: [{ role: 'user', content: prompt }],
-      }),
-    });
-
-    if (!res.ok) return null;
-    const json = (await res.json()) as {
+      })
+      .asResponse();
+    const json = (await response.json()) as {
       content?: Array<{ type?: string; text?: string }>;
     };
     const text = json.content?.find((block) => block.type === 'text')?.text;
