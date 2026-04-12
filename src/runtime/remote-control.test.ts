@@ -45,6 +45,7 @@ describe('remote-control', () => {
   let stdoutFileContent: string;
 
   beforeEach(() => {
+    process.env.REMOTE_CONTROL_AUTO_ACCEPT = 'true';
     _resetForTesting();
     spawnMock.mockReset();
     stdoutFileContent = '';
@@ -73,6 +74,7 @@ describe('remote-control', () => {
   });
 
   afterEach(() => {
+    delete process.env.REMOTE_CONTROL_AUTO_ACCEPT;
     _resetForTesting();
     vi.restoreAllMocks();
   });
@@ -144,6 +146,8 @@ describe('remote-control', () => {
         STATE_FILE,
         expect.stringContaining('"pid":99999'),
       );
+      const saved = String(writeFileSyncSpy.mock.calls[0]?.[1] || '');
+      expect(saved).not.toContain('https://claude.ai/code');
     });
 
     it('returns existing URL if session is already active', async () => {
@@ -258,6 +262,23 @@ describe('remote-control', () => {
       });
     });
 
+    it('requires explicit opt-in for non-interactive auto-accept', async () => {
+      process.env.REMOTE_CONTROL_AUTO_ACCEPT = 'false';
+      const proc = createMockProcess(24680);
+      spawnMock.mockReturnValue(proc);
+      const killSpy = vi
+        .spyOn(process, 'kill')
+        .mockImplementation((() => true) as any);
+
+      const result = await startRemoteControl('user1', 'tg:123', '/project');
+      expect(result).toEqual({
+        ok: false,
+        error:
+          'Remote Control auto-confirmation is disabled. Set REMOTE_CONTROL_AUTO_ACCEPT=true to enable non-interactive start.',
+      });
+      expect(killSpy).toHaveBeenCalledWith(-24680, 'SIGTERM');
+    });
+
     it('falls back to process.kill(pid) when process.kill(-pid) throws on timeout (lines 185-186)', async () => {
       vi.useFakeTimers();
       const proc = createMockProcess(44444);
@@ -338,6 +359,29 @@ describe('remote-control', () => {
         startedAt: '2026-01-01T00:00:00.000Z',
       };
       readFileSyncSpy.mockImplementation(((p: string) => {
+        if (p.endsWith('remote-control.json')) return JSON.stringify(session);
+        return '';
+      }) as any);
+      vi.spyOn(process, 'kill').mockImplementation((() => true) as any);
+
+      restoreRemoteControl();
+
+      const active = getActiveSession();
+      expect(active).not.toBeNull();
+      expect(active!.pid).toBe(77777);
+      expect(active!.url).toBe('https://claude.ai/code?bridge=env_restored');
+    });
+
+    it('restores URL from stdout when state file has no URL', () => {
+      const session = {
+        pid: 77777,
+        startedBy: 'user1',
+        startedInChat: 'tg:123',
+        startedAt: '2026-01-01T00:00:00.000Z',
+      };
+      stdoutFileContent = 'https://claude.ai/code?bridge=env_restored\n';
+      readFileSyncSpy.mockImplementation(((p: string) => {
+        if (p.endsWith('remote-control.stdout')) return stdoutFileContent;
         if (p.endsWith('remote-control.json')) return JSON.stringify(session);
         return '';
       }) as any);

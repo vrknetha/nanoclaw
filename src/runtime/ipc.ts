@@ -25,6 +25,7 @@ import {
   MemoryIpcAction,
 } from '../memory/memory-ipc-contract.js';
 import { RegisteredGroup } from '../core/types.js';
+import { validateIpcAuthToken } from './ipc-auth.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
@@ -42,6 +43,334 @@ export interface IpcDeps {
 }
 
 let ipcWatcherRunning = false;
+const IPC_RATE_LIMIT_WINDOW_MS = 60_000;
+const IPC_RATE_LIMIT_MAX_FILES_PER_WINDOW = 300;
+const MEMORY_IPC_REQUEST_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
+const ipcRateLimitState = new Map<
+  string,
+  { windowStart: number; count: number }
+>();
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function toTrimmedString(
+  value: unknown,
+  opts: { maxLen?: number; allowEmpty?: boolean } = {},
+): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (!opts.allowEmpty && trimmed.length === 0) return undefined;
+  if (opts.maxLen && trimmed.length > opts.maxLen) return undefined;
+  return trimmed;
+}
+
+function toOptionalStringArray(
+  value: unknown,
+  maxItems = 100,
+  maxLen = 255,
+): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  if (value.length > maxItems) return undefined;
+  const out: string[] = [];
+  for (const entry of value) {
+    const parsed = toTrimmedString(entry, { maxLen });
+    if (!parsed) return undefined;
+    out.push(parsed);
+  }
+  return out;
+}
+
+function toOptionalBoolean(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+function toOptionalNumber(
+  value: unknown,
+  opts: { min?: number; max?: number } = {},
+): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
+  if (opts.min !== undefined && value < opts.min) return undefined;
+  if (opts.max !== undefined && value > opts.max) return undefined;
+  return value;
+}
+
+function canProcessIpcFile(sourceGroup: string, kind: string): boolean {
+  const now = Date.now();
+  const key = `${sourceGroup}:${kind}`;
+  const state = ipcRateLimitState.get(key);
+  if (!state || now - state.windowStart >= IPC_RATE_LIMIT_WINDOW_MS) {
+    ipcRateLimitState.set(key, { windowStart: now, count: 1 });
+    return true;
+  }
+  if (state.count >= IPC_RATE_LIMIT_MAX_FILES_PER_WINDOW) {
+    return false;
+  }
+  state.count += 1;
+  return true;
+}
+
+function isTrustedDirectory(dirPath: string): boolean {
+  try {
+    const stat = fs.lstatSync(dirPath);
+    return stat.isDirectory() && !stat.isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+function claimIpcFile(filePath: string): string {
+  const stat = fs.lstatSync(filePath);
+  if (!stat.isFile() || stat.isSymbolicLink()) {
+    throw new Error('IPC payload must be a regular file');
+  }
+  const claimed = path.join(
+    path.dirname(filePath),
+    `.processing-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${path.basename(filePath)}`,
+  );
+  fs.renameSync(filePath, claimed);
+  return claimed;
+}
+
+function archiveIpcErrorFile(
+  ipcBaseDir: string,
+  sourceGroup: string,
+  filename: string,
+  claimedPath: string,
+): void {
+  const errorDir = path.join(ipcBaseDir, 'errors');
+  fs.mkdirSync(errorDir, { recursive: true });
+  try {
+    fs.renameSync(
+      claimedPath,
+      path.join(errorDir, `${sourceGroup}-${filename}`),
+    );
+  } catch (err) {
+    const code =
+      err && typeof err === 'object' && 'code' in err
+        ? String((err as { code?: string }).code)
+        : '';
+    if (code !== 'ENOENT') {
+      throw err;
+    }
+  }
+}
+
+interface ParsedIpcMessage {
+  type: 'message';
+  chatJid: string;
+  text: string;
+  sender?: string;
+}
+
+function parseIpcMessage(raw: unknown, sourceGroup: string): ParsedIpcMessage {
+  if (!isPlainObject(raw)) throw new Error('Invalid IPC message payload');
+  const authToken = toTrimmedString(raw.authToken, { maxLen: 512 }) || '';
+  if (!validateIpcAuthToken(sourceGroup, authToken)) {
+    throw new Error('Invalid IPC message auth token');
+  }
+  const type = toTrimmedString(raw.type, { maxLen: 64 });
+  if (type !== 'message') throw new Error('Invalid IPC message type');
+  const chatJid = toTrimmedString(raw.chatJid, { maxLen: 255 });
+  const text = toTrimmedString(raw.text, { maxLen: 20000 });
+  if (!chatJid || !text) throw new Error('Invalid IPC message fields');
+  const sender = toTrimmedString(raw.sender, { maxLen: 255 });
+  return { type: 'message', chatJid, text, ...(sender ? { sender } : {}) };
+}
+
+interface ParsedTaskIpcData {
+  type: string;
+  taskId?: string;
+  prompt?: string;
+  schedule_type?: 'cron' | 'interval' | 'once' | 'manual';
+  schedule_value?: string;
+  context_mode?: string;
+  script?: string;
+  jobId?: string;
+  scheduleType?: 'cron' | 'interval' | 'once' | 'manual';
+  linkedSessions?: string[];
+  groupScope?: string;
+  createdBy?: 'agent' | 'human';
+  timeoutMs?: number;
+  maxRetries?: number;
+  retryBackoffMs?: number;
+  maxConsecutiveFailures?: number;
+  statuses?: string[];
+  limit?: number;
+  groupFolder?: string;
+  chatJid?: string;
+  targetJid?: string;
+  jid?: string;
+  name?: string;
+  folder?: string;
+  trigger?: string;
+  requiresTrigger?: boolean;
+  agentConfig?: RegisteredGroup['agentConfig'];
+}
+
+function toScheduleType(
+  value: unknown,
+): 'cron' | 'interval' | 'once' | 'manual' | undefined {
+  const parsed = toTrimmedString(value, { maxLen: 32 });
+  if (
+    parsed === 'cron' ||
+    parsed === 'interval' ||
+    parsed === 'once' ||
+    parsed === 'manual'
+  ) {
+    return parsed;
+  }
+  return undefined;
+}
+
+function parseAgentConfigPayload(
+  value: unknown,
+): RegisteredGroup['agentConfig'] | undefined {
+  if (value === undefined) return undefined;
+  if (!isPlainObject(value)) return undefined;
+  const model = toTrimmedString(value.model, { maxLen: 120 });
+  const timeout = toOptionalNumber(value.timeout, {
+    min: 1000,
+    max: 3_600_000,
+  });
+  const parsed: RegisteredGroup['agentConfig'] = {};
+  if (model) parsed.model = model;
+  if (timeout !== undefined) parsed.timeout = Math.round(timeout);
+  return Object.keys(parsed).length > 0 ? parsed : undefined;
+}
+
+function parseTaskIpcData(
+  raw: unknown,
+  sourceGroup: string,
+): ParsedTaskIpcData {
+  if (!isPlainObject(raw)) throw new Error('Invalid IPC task payload');
+  const authToken = toTrimmedString(raw.authToken, { maxLen: 512 }) || '';
+  if (!validateIpcAuthToken(sourceGroup, authToken)) {
+    throw new Error('Invalid IPC task auth token');
+  }
+  const type = toTrimmedString(raw.type, { maxLen: 80 });
+  if (!type) throw new Error('IPC task type is required');
+  const parsed: ParsedTaskIpcData = { type };
+  const taskId = toTrimmedString(raw.taskId, { maxLen: 128 });
+  const prompt = toTrimmedString(raw.prompt, { maxLen: 20000 });
+  const scheduleType = toScheduleType(raw.scheduleType);
+  const scheduleTypeSnake = toScheduleType(raw.schedule_type);
+  const scheduleValue = toTrimmedString(raw.scheduleValue, {
+    maxLen: 1024,
+    allowEmpty: true,
+  });
+  const scheduleValueSnake = toTrimmedString(raw.schedule_value, {
+    maxLen: 1024,
+    allowEmpty: true,
+  });
+  const contextMode = toTrimmedString(raw.context_mode, { maxLen: 64 });
+  const script = toTrimmedString(raw.script, {
+    maxLen: 50_000,
+    allowEmpty: true,
+  });
+  const jobId = toTrimmedString(raw.jobId, { maxLen: 128 });
+  const linkedSessions = toOptionalStringArray(raw.linkedSessions, 200, 255);
+  const groupScope = toTrimmedString(raw.groupScope, { maxLen: 128 });
+  const createdByRaw = toTrimmedString(raw.createdBy, { maxLen: 16 });
+  const statuses = toOptionalStringArray(raw.statuses, 50, 64);
+  const groupFolder = toTrimmedString(raw.groupFolder, { maxLen: 128 });
+  const chatJid = toTrimmedString(raw.chatJid, { maxLen: 255 });
+  const targetJid = toTrimmedString(raw.targetJid, { maxLen: 255 });
+  const jid = toTrimmedString(raw.jid, { maxLen: 255 });
+  const name = toTrimmedString(raw.name, { maxLen: 255 });
+  const folder = toTrimmedString(raw.folder, { maxLen: 128 });
+  const trigger = toTrimmedString(raw.trigger, { maxLen: 255 });
+  const requiresTrigger = toOptionalBoolean(raw.requiresTrigger);
+  const agentConfig = parseAgentConfigPayload(raw.agentConfig);
+  const numericFields = {
+    timeoutMs: toOptionalNumber(raw.timeoutMs, { min: 1000, max: 3_600_000 }),
+    maxRetries: toOptionalNumber(raw.maxRetries, { min: 0, max: 100 }),
+    retryBackoffMs: toOptionalNumber(raw.retryBackoffMs, {
+      min: 0,
+      max: 86_400_000,
+    }),
+    maxConsecutiveFailures: toOptionalNumber(raw.maxConsecutiveFailures, {
+      min: 1,
+      max: 1000,
+    }),
+    limit: toOptionalNumber(raw.limit, { min: 1, max: 1000 }),
+  };
+
+  if (taskId) parsed.taskId = taskId;
+  if (prompt !== undefined) parsed.prompt = prompt;
+  if (scheduleType !== undefined) parsed.scheduleType = scheduleType;
+  if (scheduleTypeSnake !== undefined) parsed.schedule_type = scheduleTypeSnake;
+  if (scheduleValue !== undefined) parsed.schedule_value = scheduleValue;
+  if (scheduleValueSnake !== undefined)
+    parsed.schedule_value = scheduleValueSnake;
+  if (contextMode) parsed.context_mode = contextMode;
+  if (script !== undefined) parsed.script = script;
+  if (jobId) parsed.jobId = jobId;
+  if (linkedSessions !== undefined) parsed.linkedSessions = linkedSessions;
+  if (groupScope) parsed.groupScope = groupScope;
+  if (createdByRaw === 'agent' || createdByRaw === 'human') {
+    parsed.createdBy = createdByRaw;
+  }
+  if (statuses !== undefined) parsed.statuses = statuses;
+  if (groupFolder) parsed.groupFolder = groupFolder;
+  if (chatJid) parsed.chatJid = chatJid;
+  if (targetJid) parsed.targetJid = targetJid;
+  if (jid) parsed.jid = jid;
+  if (name) parsed.name = name;
+  if (folder) parsed.folder = folder;
+  if (trigger) parsed.trigger = trigger;
+  if (requiresTrigger !== undefined) parsed.requiresTrigger = requiresTrigger;
+  if (agentConfig !== undefined) parsed.agentConfig = agentConfig;
+  if (numericFields.timeoutMs !== undefined)
+    parsed.timeoutMs = Math.round(numericFields.timeoutMs);
+  if (numericFields.maxRetries !== undefined)
+    parsed.maxRetries = Math.round(numericFields.maxRetries);
+  if (numericFields.retryBackoffMs !== undefined)
+    parsed.retryBackoffMs = Math.round(numericFields.retryBackoffMs);
+  if (numericFields.maxConsecutiveFailures !== undefined)
+    parsed.maxConsecutiveFailures = Math.round(
+      numericFields.maxConsecutiveFailures,
+    );
+  if (numericFields.limit !== undefined)
+    parsed.limit = Math.round(numericFields.limit);
+  return parsed;
+}
+
+function parseMemoryIpcRequest(
+  raw: unknown,
+  sourceGroup: string,
+): {
+  requestId: string;
+  action: MemoryIpcAction;
+  payload: Record<string, unknown>;
+} {
+  if (!isPlainObject(raw)) throw new Error('Invalid memory IPC payload');
+  const authToken = toTrimmedString(raw.authToken, { maxLen: 512 }) || '';
+  if (!validateIpcAuthToken(sourceGroup, authToken)) {
+    throw new Error('Invalid memory IPC auth token');
+  }
+  const requestId = toTrimmedString(raw.requestId, { maxLen: 128 });
+  const action = toTrimmedString(raw.action, { maxLen: 64 });
+  if (!requestId || !action) {
+    throw new Error('Invalid memory IPC request envelope');
+  }
+  if (!MEMORY_IPC_REQUEST_ID_PATTERN.test(requestId)) {
+    throw new Error('Invalid memory IPC requestId');
+  }
+  if (!MEMORY_IPC_ACTIONS.includes(action as MemoryIpcAction)) {
+    throw new Error(`Unsupported memory IPC action: ${action}`);
+  }
+  const payload = raw.payload === undefined ? {} : raw.payload;
+  if (!isPlainObject(payload)) {
+    throw new Error('Invalid memory IPC payload body');
+  }
+  return {
+    requestId,
+    action: action as MemoryIpcAction,
+    payload,
+  };
+}
 
 function jobBelongsToSourceGroup(
   job: { group_scope: string; linked_sessions: string[] },
@@ -89,12 +418,20 @@ export function startIpcWatcher(deps: IpcDeps): void {
   fs.mkdirSync(ipcBaseDir, { recursive: true });
 
   const processIpcFiles = async () => {
-    // Scan all group IPC directories (identity determined by directory)
-    let groupFolders: string[];
+    // Scan group IPC directories (identity determined by directory)
+    let discoveredGroupFolders: string[];
     try {
-      groupFolders = fs.readdirSync(ipcBaseDir).filter((f) => {
-        const stat = fs.statSync(path.join(ipcBaseDir, f));
-        return stat.isDirectory() && f !== 'errors';
+      discoveredGroupFolders = fs.readdirSync(ipcBaseDir).filter((f) => {
+        if (f === 'errors') return false;
+        const groupPath = path.join(ipcBaseDir, f);
+        const trusted = isTrustedDirectory(groupPath);
+        if (!trusted && fs.existsSync(groupPath)) {
+          logger.warn(
+            { sourceGroup: f },
+            'Ignoring untrusted IPC directory (not a regular directory or symlink)',
+          );
+        }
+        return trusted;
       });
     } catch (err) {
       logger.error({ err }, 'Error reading IPC base directory');
@@ -103,6 +440,17 @@ export function startIpcWatcher(deps: IpcDeps): void {
     }
 
     const registeredGroups = deps.registeredGroups();
+    const allowedFolders = new Set(
+      Object.values(registeredGroups).map((group) => group.folder),
+    );
+    const groupFolders: string[] = [];
+    for (const folder of discoveredGroupFolders) {
+      if (allowedFolders.size > 0 && !allowedFolders.has(folder)) {
+        logger.warn({ sourceGroup: folder }, 'Ignoring unknown IPC directory');
+        continue;
+      }
+      groupFolders.push(folder);
+    }
 
     // Build folder→isMain lookup from registered groups
     const folderIsMain = new Map<string, boolean>();
@@ -122,47 +470,51 @@ export function startIpcWatcher(deps: IpcDeps): void {
 
       // Process messages from this group's IPC directory
       try {
-        if (fs.existsSync(messagesDir)) {
+        if (isTrustedDirectory(messagesDir)) {
           const messageFiles = fs
             .readdirSync(messagesDir)
             .filter((f) => f.endsWith('.json'));
           for (const file of messageFiles) {
             const filePath = path.join(messagesDir, file);
+            let claimedPath = filePath;
             try {
-              const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-              if (data.type === 'message' && data.chatJid && data.text) {
-                // Authorization: verify this group can send to this chatJid
-                const targetGroup = registeredGroups[data.chatJid];
-                if (
-                  isMain ||
-                  (targetGroup && targetGroup.folder === sourceGroup)
-                ) {
-                  await deps.sendMessage(data.chatJid, data.text);
-                  logger.info(
-                    { chatJid: data.chatJid, sourceGroup },
-                    'IPC message sent',
-                  );
-                } else {
-                  logger.warn(
-                    { chatJid: data.chatJid, sourceGroup },
-                    'Unauthorized IPC message attempt blocked',
-                  );
-                }
+              if (!canProcessIpcFile(sourceGroup, 'messages')) {
+                throw new Error('IPC message rate limit exceeded');
               }
-              fs.unlinkSync(filePath);
+              claimedPath = claimIpcFile(filePath);
+              const rawData = JSON.parse(fs.readFileSync(claimedPath, 'utf-8'));
+              const data = parseIpcMessage(rawData, sourceGroup);
+              // Authorization: verify this group can send to this chatJid
+              const targetGroup = registeredGroups[data.chatJid];
+              if (
+                isMain ||
+                (targetGroup && targetGroup.folder === sourceGroup)
+              ) {
+                await deps.sendMessage(data.chatJid, data.text);
+                logger.info(
+                  { chatJid: data.chatJid, sourceGroup },
+                  'IPC message sent',
+                );
+              } else {
+                logger.warn(
+                  { chatJid: data.chatJid, sourceGroup },
+                  'Unauthorized IPC message attempt blocked',
+                );
+              }
+              fs.unlinkSync(claimedPath);
             } catch (err) {
               logger.error(
                 { file, sourceGroup, err },
                 'Error processing IPC message',
               );
-              const errorDir = path.join(ipcBaseDir, 'errors');
-              fs.mkdirSync(errorDir, { recursive: true });
-              fs.renameSync(
-                filePath,
-                path.join(errorDir, `${sourceGroup}-${file}`),
-              );
+              archiveIpcErrorFile(ipcBaseDir, sourceGroup, file, claimedPath);
             }
           }
+        } else if (fs.existsSync(messagesDir)) {
+          logger.warn(
+            { sourceGroup, messagesDir },
+            'Ignoring untrusted IPC messages directory',
+          );
         }
       } catch (err) {
         logger.error(
@@ -173,30 +525,36 @@ export function startIpcWatcher(deps: IpcDeps): void {
 
       // Process tasks from this group's IPC directory
       try {
-        if (fs.existsSync(tasksDir)) {
+        if (isTrustedDirectory(tasksDir)) {
           const taskFiles = fs
             .readdirSync(tasksDir)
             .filter((f) => f.endsWith('.json'));
           for (const file of taskFiles) {
             const filePath = path.join(tasksDir, file);
+            let claimedPath = filePath;
             try {
-              const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+              if (!canProcessIpcFile(sourceGroup, 'tasks')) {
+                throw new Error('IPC task rate limit exceeded');
+              }
+              claimedPath = claimIpcFile(filePath);
+              const rawData = JSON.parse(fs.readFileSync(claimedPath, 'utf-8'));
+              const data = parseTaskIpcData(rawData, sourceGroup);
               // Pass source group identity to processTaskIpc for authorization
               await processTaskIpc(data, sourceGroup, isMain, deps);
-              fs.unlinkSync(filePath);
+              fs.unlinkSync(claimedPath);
             } catch (err) {
               logger.error(
                 { file, sourceGroup, err },
                 'Error processing IPC task',
               );
-              const errorDir = path.join(ipcBaseDir, 'errors');
-              fs.mkdirSync(errorDir, { recursive: true });
-              fs.renameSync(
-                filePath,
-                path.join(errorDir, `${sourceGroup}-${file}`),
-              );
+              archiveIpcErrorFile(ipcBaseDir, sourceGroup, file, claimedPath);
             }
           }
+        } else if (fs.existsSync(tasksDir)) {
+          logger.warn(
+            { sourceGroup, tasksDir },
+            'Ignoring untrusted IPC tasks directory',
+          );
         }
       } catch (err) {
         logger.error({ err, sourceGroup }, 'Error reading IPC tasks directory');
@@ -204,52 +562,47 @@ export function startIpcWatcher(deps: IpcDeps): void {
 
       // Process memory request/response IPC for this group
       try {
-        if (fs.existsSync(memoryRequestsDir)) {
+        if (isTrustedDirectory(memoryRequestsDir)) {
           const memoryFiles = fs
             .readdirSync(memoryRequestsDir)
             .filter((f) => f.endsWith('.json'));
           for (const file of memoryFiles) {
             const filePath = path.join(memoryRequestsDir, file);
+            let claimedPath = filePath;
             try {
-              const request = JSON.parse(
-                fs.readFileSync(filePath, 'utf-8'),
-              ) as {
-                requestId: string;
-                action: string;
-                payload: Record<string, unknown>;
-              };
-              if (
-                !MEMORY_IPC_ACTIONS.includes(request.action as MemoryIpcAction)
-              ) {
-                throw new Error(
-                  `Unsupported memory IPC action: ${request.action}`,
-                );
+              if (!canProcessIpcFile(sourceGroup, 'memory')) {
+                throw new Error('Memory IPC rate limit exceeded');
               }
+              claimedPath = claimIpcFile(filePath);
+              const rawRequest = JSON.parse(
+                fs.readFileSync(claimedPath, 'utf-8'),
+              );
+              const request = parseMemoryIpcRequest(rawRequest, sourceGroup);
 
               const response = await processMemoryRequest(
                 {
                   requestId: request.requestId,
-                  action: request.action as MemoryIpcAction,
+                  action: request.action,
                   payload: request.payload || {},
                 },
                 sourceGroup,
                 isMain,
               );
               writeMemoryResponse(sourceGroup, request.requestId, response);
-              fs.unlinkSync(filePath);
+              fs.unlinkSync(claimedPath);
             } catch (err) {
               logger.error(
                 { file, sourceGroup, err },
                 'Error processing memory IPC request',
               );
-              const errorDir = path.join(ipcBaseDir, 'errors');
-              fs.mkdirSync(errorDir, { recursive: true });
-              fs.renameSync(
-                filePath,
-                path.join(errorDir, `${sourceGroup}-${file}`),
-              );
+              archiveIpcErrorFile(ipcBaseDir, sourceGroup, file, claimedPath);
             }
           }
+        } else if (fs.existsSync(memoryRequestsDir)) {
+          logger.warn(
+            { sourceGroup, memoryRequestsDir },
+            'Ignoring untrusted memory IPC requests directory',
+          );
         }
       } catch (err) {
         logger.error(
@@ -320,6 +673,13 @@ export async function processTaskIpc(
       const name = (data.name || '').trim();
       const prompt = (data.prompt || '').trim();
       if (!name || !prompt || !scheduleType) break;
+      if (typeof data.script === 'string' && data.script.trim().length > 0) {
+        logger.warn(
+          { sourceGroup, name },
+          'Rejected scheduler_upsert_job with script payload from IPC',
+        );
+        break;
+      }
 
       const groupScope = (data.groupScope || sourceGroup).trim();
       if (!isMain && groupScope !== sourceGroup) {
@@ -389,25 +749,42 @@ export async function processTaskIpc(
         break;
       }
 
-      const id =
-        (data.jobId && String(data.jobId)) ||
-        generateJobId({
-          name,
-          prompt,
-          scheduleType,
-          scheduleValue,
-          groupScope,
-        });
+      const requestedJobId = (data.jobId || '').toString().trim();
+      let id = generateJobId({
+        name,
+        prompt,
+        scheduleType,
+        scheduleValue,
+        groupScope,
+      });
+      if (requestedJobId) {
+        const existing = getJobById(requestedJobId);
+        if (existing) {
+          if (
+            !isMain &&
+            !jobBelongsToSourceGroup(existing, sourceGroup, registeredGroups)
+          ) {
+            logger.warn(
+              { sourceGroup, requestedJobId },
+              'Rejected scheduler_upsert_job with cross-group jobId',
+            );
+            break;
+          }
+          id = requestedJobId;
+        } else {
+          id = requestedJobId;
+        }
+      }
       const upsertResult = upsertJob({
         id,
         name,
         prompt,
-        script: data.script || null,
+        script: null,
         schedule_type: scheduleType,
         schedule_value: scheduleValue,
         linked_sessions: linkedSessions,
         group_scope: groupScope,
-        created_by: data.createdBy || 'agent',
+        created_by: 'agent',
         status: 'active',
         next_run: nextRun,
         timeout_ms:
@@ -456,7 +833,13 @@ export async function processTaskIpc(
       const updates: Parameters<typeof updateJob>[1] = {};
       if (data.name !== undefined) updates.name = data.name;
       if (data.prompt !== undefined) updates.prompt = data.prompt;
-      if (data.script !== undefined) updates.script = data.script || null;
+      if (data.script !== undefined) {
+        logger.warn(
+          { sourceGroup, jobId },
+          'Rejected scheduler_update_job script mutation from IPC',
+        );
+        break;
+      }
       if (data.schedule_type !== undefined)
         updates.schedule_type = data.schedule_type as
           | 'cron'

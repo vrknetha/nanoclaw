@@ -883,7 +883,9 @@ describe('handleSessionCommand', () => {
   it('continues /new even when archiveCurrentSession throws', async () => {
     // Covers line 277: catch block for archiveCurrentSession error
     const deps = makeDeps({
-      archiveCurrentSession: vi.fn().mockRejectedValue(new Error('archive failed')),
+      archiveCurrentSession: vi
+        .fn()
+        .mockRejectedValue(new Error('archive failed')),
     });
     const result = await handleSessionCommand({
       missedMessages: [makeMsg('/new')],

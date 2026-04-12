@@ -15,6 +15,102 @@ import {
 
 let db: Database.Database;
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function parseRegisteredGroupAgentConfig(
+  rawConfig: string | null,
+  context: { jid: string; folder: string },
+): RegisteredGroup['agentConfig'] | undefined {
+  if (!rawConfig) return undefined;
+  try {
+    const parsed = JSON.parse(rawConfig) as unknown;
+    if (!isPlainObject(parsed)) {
+      throw new Error('container_config must be a JSON object');
+    }
+
+    const config: NonNullable<RegisteredGroup['agentConfig']> = {};
+    if (typeof parsed.model === 'string' && parsed.model.trim()) {
+      config.model = parsed.model.trim().slice(0, 120);
+    }
+    if (
+      typeof parsed.timeout === 'number' &&
+      Number.isFinite(parsed.timeout) &&
+      parsed.timeout >= 1_000 &&
+      parsed.timeout <= 3_600_000
+    ) {
+      config.timeout = Math.round(parsed.timeout);
+    }
+    if (Array.isArray(parsed.additionalMounts)) {
+      const mounts = parsed.additionalMounts
+        .filter((item) => isPlainObject(item))
+        .map((item) => {
+          const hostPath =
+            typeof item.hostPath === 'string' ? item.hostPath.trim() : '';
+          if (!hostPath) return null;
+          const mount: {
+            hostPath: string;
+            containerPath?: string;
+            readonly?: boolean;
+          } = { hostPath };
+          if (
+            typeof item.containerPath === 'string' &&
+            item.containerPath.trim().length > 0
+          ) {
+            mount.containerPath = item.containerPath.trim();
+          }
+          if (typeof item.readonly === 'boolean') {
+            mount.readonly = item.readonly;
+          }
+          return mount;
+        })
+        .filter((item): item is NonNullable<typeof item> => item !== null);
+      if (mounts.length > 0) {
+        config.additionalMounts = mounts;
+      }
+    }
+
+    if (isPlainObject(parsed.thinking)) {
+      const mode = parsed.thinking.mode;
+      if (mode === 'adaptive' || mode === 'enabled' || mode === 'disabled') {
+        config.thinking = { mode };
+        if (
+          parsed.thinking.effort === 'low' ||
+          parsed.thinking.effort === 'medium' ||
+          parsed.thinking.effort === 'high' ||
+          parsed.thinking.effort === 'max'
+        ) {
+          config.thinking.effort = parsed.thinking.effort;
+        }
+        if (
+          typeof parsed.thinking.budgetTokens === 'number' &&
+          Number.isFinite(parsed.thinking.budgetTokens) &&
+          parsed.thinking.budgetTokens >= 0
+        ) {
+          config.thinking.budgetTokens = Math.round(
+            parsed.thinking.budgetTokens,
+          );
+        }
+        if (
+          parsed.thinking.display === 'summarized' ||
+          parsed.thinking.display === 'omitted'
+        ) {
+          config.thinking.display = parsed.thinking.display;
+        }
+      }
+    }
+
+    return Object.keys(config).length > 0 ? config : undefined;
+  } catch (err) {
+    logger.warn(
+      { jid: context.jid, folder: context.folder, err },
+      'Ignoring invalid registered group container_config JSON',
+    );
+    return undefined;
+  }
+}
+
 function createSchema(database: Database.Database): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS chats (
@@ -809,9 +905,10 @@ export function getRegisteredGroup(
     folder: row.folder,
     trigger: row.trigger_pattern,
     added_at: row.added_at,
-    agentConfig: row.container_config
-      ? JSON.parse(row.container_config)
-      : undefined,
+    agentConfig: parseRegisteredGroupAgentConfig(row.container_config, {
+      jid: row.jid,
+      folder: row.folder,
+    }),
     requiresTrigger:
       row.requires_trigger === null ? undefined : row.requires_trigger === 1,
     isMain: row.is_main === 1 ? true : undefined,
@@ -862,9 +959,10 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
       folder: row.folder,
       trigger: row.trigger_pattern,
       added_at: row.added_at,
-      agentConfig: row.container_config
-        ? JSON.parse(row.container_config)
-        : undefined,
+      agentConfig: parseRegisteredGroupAgentConfig(row.container_config, {
+        jid: row.jid,
+        folder: row.folder,
+      }),
       requiresTrigger:
         row.requires_trigger === null ? undefined : row.requires_trigger === 1,
       isMain: row.is_main === 1 ? true : undefined,

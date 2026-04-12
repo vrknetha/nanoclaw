@@ -276,7 +276,7 @@ describe('executeRunnerProcess', () => {
         expect.objectContaining({
           group: 'Test Group',
           processName: 'test-proc',
-          error: err,
+          error: err.message,
         }),
         expect.stringContaining('spawn error'),
       );
@@ -641,6 +641,63 @@ describe('executeRunnerProcess', () => {
         'chunk-1',
         'chunk-2',
       ]);
+    });
+
+    it('keeps running when onOutput callback rejects', async () => {
+      const onOutput = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('callback boom'))
+        .mockResolvedValueOnce(undefined);
+      const spec = makeSpec({ onOutput });
+      const resultP = executeRunnerProcess(spec);
+
+      const first = JSON.stringify({ status: 'success', result: 'first' });
+      const second = JSON.stringify({ status: 'success', result: 'second' });
+      fakeProc.stdout.push(
+        `${OUTPUT_START_MARKER}\n${first}\n${OUTPUT_END_MARKER}\n`,
+      );
+      fakeProc.stdout.push(
+        `${OUTPUT_START_MARKER}\n${second}\n${OUTPUT_END_MARKER}\n`,
+      );
+      await vi.advanceTimersByTimeAsync(10);
+
+      fakeProc.emit('close', 0);
+      await vi.advanceTimersByTimeAsync(10);
+
+      const result = await resultP;
+      expect(result.status).toBe('success');
+      expect(onOutput).toHaveBeenCalledTimes(2);
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.objectContaining({ group: 'Test Group' }),
+        'onOutput callback failed',
+      );
+    });
+
+    it('trims oversized streaming parse buffers', async () => {
+      const onOutput = vi.fn(async () => {});
+      const spec = makeSpec({ onOutput });
+      const resultP = executeRunnerProcess(spec);
+
+      fakeProc.stdout.push('x'.repeat(140_000));
+      await vi.advanceTimersByTimeAsync(10);
+      const json = JSON.stringify({ status: 'success', result: 'ok' });
+      fakeProc.stdout.push(
+        `${OUTPUT_START_MARKER}\n${json}\n${OUTPUT_END_MARKER}\n`,
+      );
+      await vi.advanceTimersByTimeAsync(10);
+
+      fakeProc.emit('close', 0);
+      await vi.advanceTimersByTimeAsync(10);
+      const result = await resultP;
+
+      expect(result.status).toBe('success');
+      expect(onOutput).toHaveBeenCalledWith(
+        expect.objectContaining({ result: 'ok' }),
+      );
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ group: 'Test Group' }),
+        'Streaming parse buffer exceeded limit and was trimmed',
+      );
     });
   });
 

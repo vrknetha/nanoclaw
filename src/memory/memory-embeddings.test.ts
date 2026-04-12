@@ -53,7 +53,10 @@ describe('OpenAIEmbeddingClient', () => {
 
   describe('isEnabled()', () => {
     it('returns false when no API key', () => {
-      const client = new OpenAIEmbeddingClient(null as unknown as string, 'text-embedding-test');
+      const client = new OpenAIEmbeddingClient(
+        null as unknown as string,
+        'text-embedding-test',
+      );
       expect(client.isEnabled()).toBe(false);
     });
 
@@ -73,7 +76,10 @@ describe('OpenAIEmbeddingClient', () => {
     });
 
     it('returns true when both key and model are set', () => {
-      const client = new OpenAIEmbeddingClient('test-key', 'text-embedding-test');
+      const client = new OpenAIEmbeddingClient(
+        'test-key',
+        'text-embedding-test',
+      );
       expect(client.isEnabled()).toBe(true);
     });
   });
@@ -82,7 +88,10 @@ describe('OpenAIEmbeddingClient', () => {
 
   describe('validateConfiguration()', () => {
     it('throws when API key is missing', () => {
-      const client = new OpenAIEmbeddingClient(null as unknown as string, 'text-embedding-test');
+      const client = new OpenAIEmbeddingClient(
+        null as unknown as string,
+        'text-embedding-test',
+      );
       expect(() => client.validateConfiguration()).toThrow(
         'OPENAI_API_KEY is required for memory embeddings',
       );
@@ -110,12 +119,18 @@ describe('OpenAIEmbeddingClient', () => {
     });
 
     it('succeeds with valid configuration', () => {
-      const client = new OpenAIEmbeddingClient('test-key', 'text-embedding-test');
+      const client = new OpenAIEmbeddingClient(
+        'test-key',
+        'text-embedding-test',
+      );
       expect(() => client.validateConfiguration()).not.toThrow();
     });
 
     it('accepts model name with "embedding" in any case', () => {
-      const client = new OpenAIEmbeddingClient('test-key', 'Text-Embedding-3-large');
+      const client = new OpenAIEmbeddingClient(
+        'test-key',
+        'Text-Embedding-3-large',
+      );
       expect(() => client.validateConfiguration()).not.toThrow();
     });
   });
@@ -131,10 +146,16 @@ describe('OpenAIEmbeddingClient', () => {
     }
 
     it('sends correct request and returns embeddings', async () => {
-      const vectors = [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]];
+      const vectors = [
+        [0.1, 0.2, 0.3],
+        [0.4, 0.5, 0.6],
+      ];
       const fetchSpy = mockFetchOk(vectors.map((v) => ({ embedding: v })));
 
-      const client = new OpenAIEmbeddingClient('test-key', 'text-embedding-test');
+      const client = new OpenAIEmbeddingClient(
+        'test-key',
+        'text-embedding-test',
+      );
       const result = await client.embedMany(['hello', 'world']);
 
       expect(result).toEqual(vectors);
@@ -162,7 +183,10 @@ describe('OpenAIEmbeddingClient', () => {
         text: async () => 'rate limited',
       } as Response);
 
-      const client = new OpenAIEmbeddingClient('test-key', 'text-embedding-test');
+      const client = new OpenAIEmbeddingClient(
+        'test-key',
+        'text-embedding-test',
+      );
       await expect(client.embedMany(['hello'])).rejects.toThrow(
         /embedding request failed \(429\): rate limited/,
       );
@@ -172,7 +196,10 @@ describe('OpenAIEmbeddingClient', () => {
       // Request 2 texts but return only 1 embedding
       mockFetchOk([{ embedding: [0.1, 0.2] }]);
 
-      const client = new OpenAIEmbeddingClient('test-key', 'text-embedding-test');
+      const client = new OpenAIEmbeddingClient(
+        'test-key',
+        'text-embedding-test',
+      );
       await expect(client.embedMany(['hello', 'world'])).rejects.toThrow(
         /embedding response size mismatch: expected 2, got 1/,
       );
@@ -184,7 +211,10 @@ describe('OpenAIEmbeddingClient', () => {
         json: async () => ({ data: null }),
       } as Response);
 
-      const client = new OpenAIEmbeddingClient('test-key', 'text-embedding-test');
+      const client = new OpenAIEmbeddingClient(
+        'test-key',
+        'text-embedding-test',
+      );
       await expect(client.embedMany(['hello'])).rejects.toThrow(
         /embedding response size mismatch/,
       );
@@ -193,7 +223,10 @@ describe('OpenAIEmbeddingClient', () => {
     it('throws on invalid embedding vector (empty array)', async () => {
       mockFetchOk([{ embedding: [] }]);
 
-      const client = new OpenAIEmbeddingClient('test-key', 'text-embedding-test');
+      const client = new OpenAIEmbeddingClient(
+        'test-key',
+        'text-embedding-test',
+      );
       await expect(client.embedMany(['hello'])).rejects.toThrow(
         'embedding response contained invalid embedding vector',
       );
@@ -202,7 +235,10 @@ describe('OpenAIEmbeddingClient', () => {
     it('throws on invalid embedding vector (not an array)', async () => {
       mockFetchOk([{ embedding: 'not-an-array' as unknown as number[] }]);
 
-      const client = new OpenAIEmbeddingClient('test-key', 'text-embedding-test');
+      const client = new OpenAIEmbeddingClient(
+        'test-key',
+        'text-embedding-test',
+      );
       await expect(client.embedMany(['hello'])).rejects.toThrow(
         'embedding response contained invalid embedding vector',
       );
@@ -214,8 +250,9 @@ describe('OpenAIEmbeddingClient', () => {
       const texts = Array.from({ length: textCount }, (_, i) => `text-${i}`);
       const expectedBatches = Math.ceil(textCount / MEMORY_EMBED_BATCH_SIZE);
 
-      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(
-        async (_url, init) => {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockImplementation(async (_url, init) => {
           const body = JSON.parse((init as RequestInit).body as string);
           const batchInput = body.input as string[];
           return {
@@ -226,10 +263,12 @@ describe('OpenAIEmbeddingClient', () => {
               })),
             }),
           } as Response;
-        },
-      );
+        });
 
-      const client = new OpenAIEmbeddingClient('test-key', 'text-embedding-test');
+      const client = new OpenAIEmbeddingClient(
+        'test-key',
+        'text-embedding-test',
+      );
       const result = await client.embedMany(texts);
 
       expect(fetchSpy).toHaveBeenCalledTimes(expectedBatches);
@@ -251,7 +290,10 @@ describe('OpenAIEmbeddingClient', () => {
     it('handles empty input array', async () => {
       const fetchSpy = vi.spyOn(globalThis, 'fetch');
 
-      const client = new OpenAIEmbeddingClient('test-key', 'text-embedding-test');
+      const client = new OpenAIEmbeddingClient(
+        'test-key',
+        'text-embedding-test',
+      );
       const result = await client.embedMany([]);
 
       expect(result).toEqual([]);
@@ -269,7 +311,10 @@ describe('OpenAIEmbeddingClient', () => {
         json: async () => ({ data: [{ embedding: vector }] }),
       } as Response);
 
-      const client = new OpenAIEmbeddingClient('test-key', 'text-embedding-test');
+      const client = new OpenAIEmbeddingClient(
+        'test-key',
+        'text-embedding-test',
+      );
       const result = await client.embedOne('hello');
 
       expect(result).toEqual(vector);
@@ -278,7 +323,10 @@ describe('OpenAIEmbeddingClient', () => {
     it('throws when embedMany returns empty result', async () => {
       // This shouldn't happen in practice (embedMany validates sizes),
       // but tests the safety check at line 96-98.
-      const client = new OpenAIEmbeddingClient('test-key', 'text-embedding-test');
+      const client = new OpenAIEmbeddingClient(
+        'test-key',
+        'text-embedding-test',
+      );
       vi.spyOn(client, 'embedMany').mockResolvedValue([]);
 
       await expect(client.embedOne('hello')).rejects.toThrow(

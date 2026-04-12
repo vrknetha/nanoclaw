@@ -509,7 +509,9 @@ describe('fuseSearchResults', () => {
         text: 'old item without decay',
         scope: 'group' as const,
         group_folder: 'g1',
-        created_at: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString(),
+        created_at: new Date(
+          Date.now() - 365 * 24 * 60 * 60 * 1000,
+        ).toISOString(),
         lexical_score: 0.9,
         vector_score: 0,
         fused_score: 0,

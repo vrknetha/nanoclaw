@@ -155,6 +155,100 @@ describe('memory IPC provider integration', () => {
     vi.doUnmock('./memory-service.js');
   });
 
+  it('rejects invalid memory IPC requestId before processing', async () => {
+    vi.resetModules();
+    vi.doMock('./memory-service.js', () => ({
+      MemoryService: {
+        getInstance: () => ({
+          getProviderName: () => 'mock-provider',
+        }),
+        closeInstance: () => undefined,
+      },
+    }));
+
+    const { processMemoryRequest } = await import('./memory-ipc.js');
+    const response = await processMemoryRequest(
+      {
+        requestId: '../escape',
+        action: 'memory_search',
+        payload: { query: 'test' },
+      },
+      'team',
+      false,
+    );
+
+    expect(response.ok).toBe(false);
+    expect(response.error).toContain('Invalid memory IPC requestId');
+    vi.doUnmock('./memory-service.js');
+  });
+
+  it('rejects malformed memory_save payloads before calling memory service', async () => {
+    const saveMemory = vi.fn();
+    vi.resetModules();
+    vi.doMock('./memory-service.js', () => ({
+      MemoryService: {
+        getInstance: () => ({
+          getProviderName: () => 'mock',
+          saveMemory,
+        }),
+        closeInstance: () => undefined,
+      },
+    }));
+
+    const { processMemoryRequest } = await import('./memory-ipc.js');
+    const response = await processMemoryRequest(
+      {
+        requestId: 'req-bad-save',
+        action: 'memory_save',
+        payload: { key: 123, value: 'ok' } as unknown as Record<
+          string,
+          unknown
+        >,
+      },
+      'team',
+      false,
+    );
+
+    expect(response.ok).toBe(false);
+    expect(response.error).toContain('memory_save requires key and value');
+    expect(saveMemory).not.toHaveBeenCalled();
+    vi.doUnmock('./memory-service.js');
+  });
+
+  it('ignores cross-group overrides in IPC memory_search payloads', async () => {
+    const search = vi.fn().mockResolvedValue([]);
+    vi.resetModules();
+    vi.doMock('./memory-service.js', () => ({
+      MemoryService: {
+        getInstance: () => ({
+          getProviderName: () => 'mock',
+          search,
+        }),
+        closeInstance: () => undefined,
+      },
+    }));
+
+    const { processMemoryRequest } = await import('./memory-ipc.js');
+    const response = await processMemoryRequest(
+      {
+        requestId: 'req-scope',
+        action: 'memory_search',
+        payload: {
+          query: 'status',
+          group_folder: 'other-group',
+        },
+      },
+      'main-group',
+      true,
+    );
+
+    expect(response.ok).toBe(true);
+    expect(search).toHaveBeenCalledWith(
+      expect.objectContaining({ query: 'status', groupFolder: 'main-group' }),
+    );
+    vi.doUnmock('./memory-service.js');
+  });
+
   it('memory_search returns error response on embedding failure', async () => {
     // The search path goes through MemoryService.search which calls the embedding
     // provider. Without a valid embedding provider, the search returns an error
@@ -384,9 +478,7 @@ describe('processMemoryRequest additional branches', () => {
         search: vi.fn(),
         saveMemory: vi.fn(),
         patchMemory: vi.fn().mockReturnValue({ id: 'patched-mem' }),
-        consolidateGroupMemory: vi
-          .fn()
-          .mockResolvedValue({ merged: 1 }),
+        consolidateGroupMemory: vi.fn().mockResolvedValue({ merged: 1 }),
         runDreamingSweep: vi
           .fn()
           .mockResolvedValue({ promoted: 2, decayed: 1 }),
@@ -403,7 +495,9 @@ describe('processMemoryRequest additional branches', () => {
 
   it('handles memory_patch action', async () => {
     vi.resetModules();
-    const patchMemory = vi.fn().mockReturnValue({ id: 'patched-mem', version: 2 });
+    const patchMemory = vi
+      .fn()
+      .mockReturnValue({ id: 'patched-mem', version: 2 });
     vi.doMock('./memory-service.js', () => ({
       MemoryService: mockMemoryService({ patchMemory }),
     }));
@@ -434,9 +528,7 @@ describe('processMemoryRequest additional branches', () => {
 
   it('handles memory_consolidate action (non-main)', async () => {
     vi.resetModules();
-    const consolidateGroupMemory = vi
-      .fn()
-      .mockResolvedValue({ merged: 3 });
+    const consolidateGroupMemory = vi.fn().mockResolvedValue({ merged: 3 });
     vi.doMock('./memory-service.js', () => ({
       MemoryService: mockMemoryService({ consolidateGroupMemory }),
     }));
@@ -454,18 +546,18 @@ describe('processMemoryRequest additional branches', () => {
 
     expect(response.ok).toBe(true);
     expect(response.requestId).toBe('req-consolidate');
-    expect((response.data as { consolidation: unknown }).consolidation).toEqual({
-      merged: 3,
-    });
+    expect((response.data as { consolidation: unknown }).consolidation).toEqual(
+      {
+        merged: 3,
+      },
+    );
     // non-main agents cannot override groupFolder
     expect(consolidateGroupMemory).toHaveBeenCalledWith('team');
   });
 
-  it('handles memory_consolidate action (main with group_folder override)', async () => {
+  it('scopes memory_consolidate to source group even for main', async () => {
     vi.resetModules();
-    const consolidateGroupMemory = vi
-      .fn()
-      .mockResolvedValue({ merged: 5 });
+    const consolidateGroupMemory = vi.fn().mockResolvedValue({ merged: 5 });
     vi.doMock('./memory-service.js', () => ({
       MemoryService: mockMemoryService({ consolidateGroupMemory }),
     }));
@@ -478,11 +570,11 @@ describe('processMemoryRequest additional branches', () => {
         payload: { group_folder: 'other-group' },
       },
       'team',
-      true, // main: should use the requested group_folder
+      true,
     );
 
     expect(response.ok).toBe(true);
-    expect(consolidateGroupMemory).toHaveBeenCalledWith('other-group');
+    expect(consolidateGroupMemory).toHaveBeenCalledWith('team');
   });
 
   it('handles memory_dream action (non-main)', async () => {
@@ -515,7 +607,7 @@ describe('processMemoryRequest additional branches', () => {
     expect(runDreamingSweep).toHaveBeenCalledWith('team');
   });
 
-  it('handles memory_dream action (main with group_folder override)', async () => {
+  it('scopes memory_dream to source group even for main', async () => {
     vi.resetModules();
     const runDreamingSweep = vi
       .fn()
@@ -536,12 +628,14 @@ describe('processMemoryRequest additional branches', () => {
     );
 
     expect(response.ok).toBe(true);
-    expect(runDreamingSweep).toHaveBeenCalledWith('special-group');
+    expect(runDreamingSweep).toHaveBeenCalledWith('team');
   });
 
   it('handles procedure_save action', async () => {
     vi.resetModules();
-    const saveProcedure = vi.fn().mockReturnValue({ id: 'proc-1', title: 'Deploy' });
+    const saveProcedure = vi
+      .fn()
+      .mockReturnValue({ id: 'proc-1', title: 'Deploy' });
     vi.doMock('./memory-service.js', () => ({
       MemoryService: mockMemoryService({ saveProcedure }),
     }));
@@ -693,6 +787,27 @@ describe('writeMemoryResponse', () => {
 
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
+
+  it('rejects unsafe requestId values when writing responses', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ipc-bad-reqid-'));
+
+    vi.resetModules();
+    vi.doMock('../platform/group-folder.js', () => ({
+      resolveGroupIpcPath: () => tmpDir,
+    }));
+
+    const { writeMemoryResponse } = await import('./memory-ipc.js');
+
+    expect(() =>
+      writeMemoryResponse('team', '../escape', {
+        ok: false,
+        requestId: '../escape',
+        error: 'bad',
+      }),
+    ).toThrow('Invalid memory IPC requestId');
+
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
 });
 
 /* ------------------------------------------------------------------ */
@@ -768,7 +883,9 @@ describe('writeMemoryContextSnapshot', () => {
     expect(snapshot.generatedAt).toBeDefined();
     // generatedAt should be a valid ISO date string
     expect(() => new Date(snapshot.generatedAt)).not.toThrow();
-    expect(new Date(snapshot.generatedAt).toISOString()).toBe(snapshot.generatedAt);
+    expect(new Date(snapshot.generatedAt).toISOString()).toBe(
+      snapshot.generatedAt,
+    );
 
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });

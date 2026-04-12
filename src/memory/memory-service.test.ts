@@ -20,19 +20,33 @@ vi.mock('../core/config.js', async (importOriginal) => {
   return {
     ...original,
     get MEMORY_SCOPE_POLICY() {
-      return configOverrides.MEMORY_SCOPE_POLICY ?? original.MEMORY_SCOPE_POLICY;
+      return (
+        configOverrides.MEMORY_SCOPE_POLICY ?? original.MEMORY_SCOPE_POLICY
+      );
     },
     get MEMORY_SEMANTIC_DEDUP_ENABLED() {
-      return configOverrides.MEMORY_SEMANTIC_DEDUP_ENABLED ?? original.MEMORY_SEMANTIC_DEDUP_ENABLED;
+      return (
+        configOverrides.MEMORY_SEMANTIC_DEDUP_ENABLED ??
+        original.MEMORY_SEMANTIC_DEDUP_ENABLED
+      );
     },
     get MEMORY_USAGE_FEEDBACK_ENABLED() {
-      return configOverrides.MEMORY_USAGE_FEEDBACK_ENABLED ?? original.MEMORY_USAGE_FEEDBACK_ENABLED;
+      return (
+        configOverrides.MEMORY_USAGE_FEEDBACK_ENABLED ??
+        original.MEMORY_USAGE_FEEDBACK_ENABLED
+      );
     },
     get MEMORY_CONSOLIDATION_ENABLED() {
-      return configOverrides.MEMORY_CONSOLIDATION_ENABLED ?? original.MEMORY_CONSOLIDATION_ENABLED;
+      return (
+        configOverrides.MEMORY_CONSOLIDATION_ENABLED ??
+        original.MEMORY_CONSOLIDATION_ENABLED
+      );
     },
     get MEMORY_GLOBAL_KNOWLEDGE_DIR() {
-      return configOverrides.MEMORY_GLOBAL_KNOWLEDGE_DIR ?? original.MEMORY_GLOBAL_KNOWLEDGE_DIR;
+      return (
+        configOverrides.MEMORY_GLOBAL_KNOWLEDGE_DIR ??
+        original.MEMORY_GLOBAL_KNOWLEDGE_DIR
+      );
     },
   };
 });
@@ -454,7 +468,8 @@ describe('MemoryService', () => {
     await service.reflectAfterTurn({
       groupFolder: 'team',
       isMain: false,
-      prompt: 'We use ESLint for linting and our project uses Vitest for tests.',
+      prompt:
+        'We use ESLint for linting and our project uses Vitest for tests.',
       result: 'Got it, I will use ESLint and Vitest going forward.',
     });
 
@@ -689,11 +704,7 @@ describe('MemoryService', () => {
       result: 'I will remember your API key.',
     });
 
-    const context = await service.buildMemoryContext(
-      'api key',
-      'team',
-      false,
-    );
+    const context = await service.buildMemoryContext('api key', 'team', false);
     // No facts should be saved since the combined text contains "api_key"
     expect(context.facts).toHaveLength(0);
   });
@@ -709,11 +720,7 @@ describe('MemoryService', () => {
       result: '   ',
     });
 
-    const context = await service.buildMemoryContext(
-      'anything',
-      'team',
-      false,
-    );
+    const context = await service.buildMemoryContext('anything', 'team', false);
     expect(context.facts).toHaveLength(0);
   });
 
@@ -735,7 +742,8 @@ describe('MemoryService', () => {
       groupFolder: 'team',
       isMain: false,
       prompt: 'How do I deploy?',
-      result: 'You can deploy by running npm run deploy staging in the terminal.',
+      result:
+        'You can deploy by running npm run deploy staging in the terminal.',
       retrievedItemIds: [saved.id],
     });
 
@@ -784,8 +792,7 @@ describe('MemoryService', () => {
       groupFolder: 'team',
       isMain: false,
       userId: 'user-99',
-      prompt:
-        'Actually the default port should be 8080 not 3000.',
+      prompt: 'Actually the default port should be 8080 not 3000.',
       result: 'Understood, I have corrected the default port.',
     });
 
@@ -1022,10 +1029,7 @@ describe('MemoryService', () => {
       path.join(knowledgeDir, 'subdir', 'deep.md'),
       'This is a deeply nested knowledge document that should be discovered by the recursive scanner and ingested.',
     );
-    fs.writeFileSync(
-      path.join(knowledgeDir, 'data.json'),
-      '{"ignored": true}',
-    );
+    fs.writeFileSync(path.join(knowledgeDir, 'data.json'), '{"ignored": true}');
 
     await service.ingestGlobalKnowledge(knowledgeDir);
 
@@ -1104,8 +1108,9 @@ describe('MemoryService', () => {
     fs.mkdirSync(groupDir, { recursive: true });
     // Create a doc long enough to produce at least 2 chunks (each > 30 chars)
     // MEMORY_CHUNK_SIZE defaults to 1400, so we need >1400 chars
-    const longText = Array.from({ length: 50 }, (_, i) =>
-      `Line ${i}: ${'x'.repeat(40)}`
+    const longText = Array.from(
+      { length: 50 },
+      (_, i) => `Line ${i}: ${'x'.repeat(40)}`,
     ).join('\n');
     fs.writeFileSync(path.join(groupDir, 'CLAUDE.md'), longText);
 
@@ -1133,9 +1138,7 @@ describe('MemoryService', () => {
         prompt: 'I prefer using dark mode for all editor themes.',
         result: 'Noted, you prefer dark mode.',
       }),
-    ).rejects.toThrow(
-      /embedding provider returned \d+ vectors for \d+ facts/,
-    );
+    ).rejects.toThrow(/embedding provider returned \d+ vectors for \d+ facts/);
   });
 
   it('reflectAfterTurn triggers usage decay when enough turns have passed', async () => {
@@ -1473,8 +1476,7 @@ describe('MemoryService', () => {
   it('extractReflectionFacts skips very long lines (> 220 chars)', async () => {
     const service = makeService();
 
-    const longLine =
-      'I prefer ' + 'a'.repeat(220);
+    const longLine = 'I prefer ' + 'a'.repeat(220);
 
     await service.reflectAfterTurn({
       groupFolder: 'team',
@@ -1489,9 +1491,7 @@ describe('MemoryService', () => {
       false,
     );
     // The preference line exceeds 220 chars, so should be skipped
-    expect(
-      context.facts.filter((f) => f.value.length > 220),
-    ).toHaveLength(0);
+    expect(context.facts.filter((f) => f.value.length > 220)).toHaveLength(0);
   });
 
   it('extractReflectionFacts skips chatter lines', async () => {
@@ -1518,8 +1518,7 @@ describe('MemoryService', () => {
     await service.reflectAfterTurn({
       groupFolder: 'team',
       isMain: false,
-      prompt:
-        'I prefer to work on this tomorrow and fix things later today.',
+      prompt: 'I prefer to work on this tomorrow and fix things later today.',
       result:
         'We are currently working on the migration right now and will finish in a bit.',
     });
@@ -1847,11 +1846,7 @@ describe('MemoryService', () => {
       { isMain: false, groupFolder: 'team' },
     );
 
-    await service.buildMemoryContext(
-      'touchable item query',
-      'team',
-      false,
-    );
+    await service.buildMemoryContext('touchable item query', 'team', false);
 
     // After buildMemoryContext, facts should have been touched
     const items = store.listTopItems('group', 'team', 10);
@@ -1937,8 +1932,10 @@ describe('MemoryService', () => {
 
     // Create text that is significantly longer than MEMORY_CHUNK_SIZE (1400)
     // so it produces multiple chunks and exercises the overlap logic (line 814)
-    const longText = Array.from({ length: 60 }, (_, i) =>
-      `Section ${i}: This is a detailed paragraph with enough content to contribute to the overall length of the document for testing purposes.`,
+    const longText = Array.from(
+      { length: 60 },
+      (_, i) =>
+        `Section ${i}: This is a detailed paragraph with enough content to contribute to the overall length of the document for testing purposes.`,
     ).join('\n');
     fs.writeFileSync(path.join(groupDir, 'CLAUDE.md'), longText);
 
@@ -2277,12 +2274,7 @@ describe('MemoryService', () => {
       groupFolder: 'team',
       isMain: false,
       prompt: 'How?',
-      result: [
-        '1. do a',
-        '2. do b',
-        '3. do c',
-        '- do d',
-      ].join('\n'),
+      result: ['1. do a', '2. do b', '3. do c', '- do d'].join('\n'),
     });
 
     const context = await service.buildMemoryContext(
@@ -2331,7 +2323,8 @@ describe('MemoryService', () => {
     await service.reflectAfterTurn({
       groupFolder: 'team',
       isMain: false,
-      prompt: 'I prefer tabs over spaces.\nI prefer dark themes over light ones.',
+      prompt:
+        'I prefer tabs over spaces.\nI prefer dark themes over light ones.',
       result: 'Noted both preferences.',
       userId: 'user-embed-test',
     });

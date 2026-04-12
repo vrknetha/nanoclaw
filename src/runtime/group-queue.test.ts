@@ -551,7 +551,12 @@ describe('GroupQueue', () => {
 
     // Register a process with containerName (like a real container)
     const mockProcess = { killed: false } as any;
-    queue.registerProcess('group1@g.us', mockProcess, 'container-active', 'team');
+    queue.registerProcess(
+      'group1@g.us',
+      mockProcess,
+      'container-active',
+      'team',
+    );
 
     // Shutdown should complete without killing the process
     await queue.shutdown(5000);
@@ -699,7 +704,8 @@ describe('GroupQueue', () => {
     queue.closeStdin('group1@g.us');
 
     const closeWrites = writeFileSync.mock.calls.filter(
-      (call) => typeof call[0] === 'string' && (call[0] as string).endsWith('_close'),
+      (call) =>
+        typeof call[0] === 'string' && (call[0] as string).endsWith('_close'),
     );
     expect(closeWrites).toHaveLength(0);
   });

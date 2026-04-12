@@ -387,7 +387,8 @@ describe('PromptProfileService', () => {
     const configDir = path.join(root, 'config');
     const groupsDir = path.join(root, 'groups');
 
-    const existingContent = '# My Custom Profile\n\n## Identity\nCustom identity';
+    const existingContent =
+      '# My Custom Profile\n\n## Identity\nCustom identity';
     writeFile(path.join(configDir, 'CLAUDE.md'), existingContent);
 
     const service = new PromptProfileService({ configDir, groupsDir });

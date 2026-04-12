@@ -265,6 +265,31 @@ describe('agent-spawn timeout behavior', () => {
     expect(env.AGENT_MEMORY_ROOT).toBe('/tmp/nanoclaw-agent-memory');
   });
 
+  it('does not leak arbitrary host env vars into runner env', async () => {
+    const originalKey = process.env.OPENAI_API_KEY;
+    try {
+      process.env.OPENAI_API_KEY = 'should-not-leak';
+      const resultPromise = spawnAgent(testGroup, testInput, () => {});
+      await vi.advanceTimersByTimeAsync(10);
+      fakeProc.emit('close', 0);
+      await vi.advanceTimersByTimeAsync(10);
+      await resultPromise;
+
+      const spawnCalls = vi.mocked(spawn).mock.calls;
+      const env = spawnCalls[spawnCalls.length - 1][2]?.env as Record<
+        string,
+        string
+      >;
+      expect(env.OPENAI_API_KEY).toBeUndefined();
+    } finally {
+      if (originalKey === undefined) {
+        delete process.env.OPENAI_API_KEY;
+      } else {
+        process.env.OPENAI_API_KEY = originalKey;
+      }
+    }
+  });
+
   it('continues without custom system prompt when compileSystemPrompt throws (line 70)', async () => {
     // Make compileSystemPrompt throw
     vi.mocked(getPromptProfileService).mockReturnValueOnce({

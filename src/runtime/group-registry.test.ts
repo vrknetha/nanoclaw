@@ -41,6 +41,8 @@ import {
   listAvailableGroups,
 } from './group-registry.js';
 
+type PersistGroupFn = (jid: string, group: RegisteredGroup) => void;
+
 // Typed handles for convenience
 const mockFs = vi.mocked(fs);
 const mockResolve = vi.mocked(resolveGroupFolderPath);
@@ -61,14 +63,14 @@ function makeGroup(overrides: Partial<RegisteredGroup> = {}): RegisteredGroup {
 // ─────────────────────────────────────────────
 describe('registerGroup', () => {
   let groups: Record<string, RegisteredGroup>;
-  let persist: ReturnType<typeof vi.fn>;
-  let ensureOneCLIAgent: ReturnType<typeof vi.fn>;
+  let persist: ReturnType<typeof vi.fn<PersistGroupFn>>;
+  let ensureOneCLIAgent: ReturnType<typeof vi.fn<PersistGroupFn>>;
 
   beforeEach(() => {
     vi.clearAllMocks();
     groups = {};
-    persist = vi.fn();
-    ensureOneCLIAgent = vi.fn();
+    persist = vi.fn<PersistGroupFn>();
+    ensureOneCLIAgent = vi.fn<PersistGroupFn>();
     mockResolve.mockReturnValue('/resolved/test-group');
     mockFs.existsSync.mockReturnValue(false);
   });
@@ -221,12 +223,12 @@ describe('registerGroup', () => {
 // ─────────────────────────────────────────────
 describe('setGroupModelOverride', () => {
   let groups: Record<string, RegisteredGroup>;
-  let persist: ReturnType<typeof vi.fn>;
+  let persist: ReturnType<typeof vi.fn<PersistGroupFn>>;
 
   beforeEach(() => {
     vi.clearAllMocks();
     groups = {};
-    persist = vi.fn();
+    persist = vi.fn<PersistGroupFn>();
   });
 
   it('does nothing when group does not exist', () => {
@@ -289,12 +291,12 @@ describe('setGroupModelOverride', () => {
 // ─────────────────────────────────────────────
 describe('setGroupThinkingOverride', () => {
   let groups: Record<string, RegisteredGroup>;
-  let persist: ReturnType<typeof vi.fn>;
+  let persist: ReturnType<typeof vi.fn<PersistGroupFn>>;
 
   beforeEach(() => {
     vi.clearAllMocks();
     groups = {};
-    persist = vi.fn();
+    persist = vi.fn<PersistGroupFn>();
   });
 
   it('does nothing when group does not exist', () => {

@@ -3,7 +3,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CachedEmbeddingProvider } from './memory-embedding-cache.js';
 import { EmbeddingProvider } from './memory-embeddings.js';
 
-function makeInner(overrides: Partial<EmbeddingProvider> = {}): EmbeddingProvider & { calls: number; embedManyCalls: number } {
+function makeInner(
+  overrides: Partial<EmbeddingProvider> = {},
+): EmbeddingProvider & { calls: number; embedManyCalls: number } {
   const tracker = {
     calls: 0,
     embedManyCalls: 0,
@@ -28,7 +30,11 @@ function makeStore() {
     cache,
     getCachedEmbedding: (textHash: string, model: string) =>
       cache.get(`${model}:${textHash}`) || null,
-    putCachedEmbedding: (textHash: string, model: string, embedding: number[]) => {
+    putCachedEmbedding: (
+      textHash: string,
+      model: string,
+      embedding: number[],
+    ) => {
       cache.set(`${model}:${textHash}`, embedding);
     },
   };
@@ -111,9 +117,9 @@ describe('CachedEmbeddingProvider', () => {
     const store = makeStore();
     const provider = new CachedEmbeddingProvider(inner, store, 'test-model');
 
-    await expect(
-      provider.embedMany(['a', 'b', 'c']),
-    ).rejects.toThrow(/returned 1 vectors for 3 uncached texts/);
+    await expect(provider.embedMany(['a', 'b', 'c'])).rejects.toThrow(
+      /returned 1 vectors for 3 uncached texts/,
+    );
   });
 
   it('throws when an embedding is missing (undefined) in the inner result', async () => {
@@ -126,9 +132,9 @@ describe('CachedEmbeddingProvider', () => {
     const store = makeStore();
     const provider = new CachedEmbeddingProvider(inner, store, 'test-model');
 
-    await expect(
-      provider.embedMany(['x']),
-    ).rejects.toThrow(/missing embedding at index 0/);
+    await expect(provider.embedMany(['x'])).rejects.toThrow(
+      /missing embedding at index 0/,
+    );
   });
 
   it('enforces daily embed budget only on uncached API calls', async () => {

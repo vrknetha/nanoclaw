@@ -288,7 +288,18 @@ describe('memory dreaming sweep', () => {
       source: 'test',
       confidence: 0.9,
     });
-    for (const qh of ['qh-1', 'qh-2', 'qh-3', 'qh-4', 'qh-5', 'qh-6', 'qh-7', 'qh-8', 'qh-9', 'qh-10']) {
+    for (const qh of [
+      'qh-1',
+      'qh-2',
+      'qh-3',
+      'qh-4',
+      'qh-5',
+      'qh-6',
+      'qh-7',
+      'qh-8',
+      'qh-9',
+      'qh-10',
+    ]) {
       store.recordRetrievalSignal(highItem.id, 0.95, qh);
     }
 
@@ -517,7 +528,15 @@ describe('memory dreaming sweep', () => {
     for (const [i, qh] of ['a1', 'a2', 'a3', 'a4', 'a5'].entries()) {
       store.recordRetrievalSignal(itemA.id, 0.85 - i * 0.02, qh);
     }
-    for (const [i, qh] of ['b1', 'b2', 'b3', 'b4', 'b5', 'b6', 'b7'].entries()) {
+    for (const [i, qh] of [
+      'b1',
+      'b2',
+      'b3',
+      'b4',
+      'b5',
+      'b6',
+      'b7',
+    ].entries()) {
       store.recordRetrievalSignal(itemB.id, 0.92 - i * 0.01, qh);
     }
 
@@ -560,7 +579,16 @@ describe('memory dreaming sweep', () => {
       source: 'test',
       confidence: 0.9,
     });
-    for (const qh of ['anc1', 'anc2', 'anc3', 'anc4', 'anc5', 'anc6', 'anc7', 'anc8']) {
+    for (const qh of [
+      'anc1',
+      'anc2',
+      'anc3',
+      'anc4',
+      'anc5',
+      'anc6',
+      'anc7',
+      'anc8',
+    ]) {
       store.recordRetrievalSignal(anchor.id, 0.95, qh);
     }
 

@@ -24,7 +24,7 @@ describe('logger', () => {
     logger.fatal('test fatal message');
 
     const output = stderrWriteSpy.mock.calls
-      .map((call) => String(call[0]))
+      .map((call: unknown[]) => String(call[0]))
       .join('');
     expect(output).toContain('FATAL');
     expect(output).toContain('test fatal message');
@@ -36,7 +36,7 @@ describe('logger', () => {
     logger.fatal({ key: 'val' }, 'fatal with data');
 
     const output = stderrWriteSpy.mock.calls
-      .map((call) => String(call[0]))
+      .map((call: unknown[]) => String(call[0]))
       .join('');
     expect(output).toContain('FATAL');
     expect(output).toContain('fatal with data');
@@ -48,7 +48,7 @@ describe('logger', () => {
     logger.error({ err: 'string-error' }, 'non-error object');
 
     const output = stderrWriteSpy.mock.calls
-      .map((call) => String(call[0]))
+      .map((call: unknown[]) => String(call[0]))
       .join('');
     expect(output).toContain('non-error object');
     expect(output).toContain('string-error');
@@ -60,7 +60,7 @@ describe('logger', () => {
     logger.error({ err: new Error('real-error') }, 'error instance');
 
     const output = stderrWriteSpy.mock.calls
-      .map((call) => String(call[0]))
+      .map((call: unknown[]) => String(call[0]))
       .join('');
     expect(output).toContain('error instance');
     expect(output).toContain('real-error');
@@ -74,7 +74,7 @@ describe('logger', () => {
     // Depending on LOG_LEVEL env, debug may be suppressed
     // At default (info level), debug output should not appear
     const stdoutOutput = stdoutWriteSpy.mock.calls
-      .map((call) => String(call[0]))
+      .map((call: unknown[]) => String(call[0]))
       .join('');
     // If LOG_LEVEL is not set to debug, this will be suppressed
     if (!process.env.LOG_LEVEL || process.env.LOG_LEVEL === 'info') {
@@ -83,13 +83,17 @@ describe('logger', () => {
   });
 
   it('uncaughtException handler calls logger.fatal and process.exit', async () => {
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+    const exitSpy = vi
+      .spyOn(process, 'exit')
+      .mockImplementation(() => undefined as never);
     const { logger } = await import('./logger.js');
     const fatalSpy = vi.spyOn(logger, 'fatal');
 
     // Find the uncaughtException listener registered by logger.ts
     const listeners = process.listeners('uncaughtException');
-    const loggerListener = listeners[listeners.length - 1] as (err: Error) => void;
+    const loggerListener = listeners[listeners.length - 1] as (
+      err: Error,
+    ) => void;
     loggerListener(new Error('test uncaught'));
 
     expect(fatalSpy).toHaveBeenCalledWith(
@@ -106,7 +110,9 @@ describe('logger', () => {
     const errorSpy = vi.spyOn(logger, 'error');
 
     const listeners = process.listeners('unhandledRejection');
-    const loggerListener = listeners[listeners.length - 1] as (reason: unknown) => void;
+    const loggerListener = listeners[listeners.length - 1] as (
+      reason: unknown,
+    ) => void;
     loggerListener(new Error('test rejection'));
 
     expect(errorSpy).toHaveBeenCalledWith(

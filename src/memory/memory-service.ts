@@ -855,7 +855,37 @@ function isNoiseQuery(value: string): boolean {
 }
 
 function containsSensitiveMaterial(text: string): boolean {
-  return /api[_-]?key|token|password|secret|oauth/i.test(text);
+  if (!text.trim()) return false;
+
+  // Explicit high-signal secret identifiers, even without value assignment.
+  if (/\b(api[_-]?key|client[_-]?secret|private[_-]?key)\b/i.test(text)) {
+    return true;
+  }
+
+  // High-signal secret formats and provider key prefixes.
+  if (
+    /\b(sk-[a-z0-9]{20,}|ghp_[a-z0-9]{20,}|xox[baprs]-[a-z0-9-]{20,})\b/i.test(
+      text,
+    )
+  ) {
+    return true;
+  }
+
+  // Explicit credential assignment patterns.
+  if (
+    /\b(api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret|client[_-]?secret|private[_-]?key)\b\s*(?:=|:|is)\s*['"]?[a-z0-9._~+/-]{8,}['"]?/i.test(
+      text,
+    )
+  ) {
+    return true;
+  }
+
+  // Authorization header style bearer tokens.
+  if (/\bbearer\s+[a-z0-9._~+/-]{16,}\b/i.test(text)) {
+    return true;
+  }
+
+  return false;
 }
 
 function extractReflectionFacts(
@@ -982,7 +1012,6 @@ function extractProcedure(
 
   const stepCount = lines.filter((line) => /^\d+\.|^-\s+/.test(line)).length;
   if (stepCount < 3) return null;
-  if (/\b(can't|cannot|unable|failed|error)\b/i.test(result)) return null;
 
   const titleLine =
     lines.find((line) => line.length > 10) || 'Learned workflow';

@@ -271,16 +271,6 @@ export async function handleSessionCommand(opts: {
   // Forward the literal slash command as the prompt (no XML formatting)
   if (command.kind === 'new') {
     try {
-      await deps.archiveCurrentSession();
-      await deps.onSessionArchived?.();
-    } catch (err) {
-      logger.warn(
-        { group: groupName, err },
-        'Session archive failed during /new; continuing with reset',
-      );
-    }
-
-    try {
       deps.clearCurrentSession();
     } catch (err) {
       logger.error(
@@ -289,6 +279,16 @@ export async function handleSessionCommand(opts: {
       );
       await deps.sendMessage('/new failed. The session is unchanged.');
       return { handled: true, success: false };
+    }
+
+    try {
+      await deps.archiveCurrentSession();
+      await deps.onSessionArchived?.();
+    } catch (err) {
+      logger.warn(
+        { group: groupName, err },
+        'Session archive failed during /new; continuing with reset',
+      );
     }
 
     deps.advanceCursor(cmdMsg.timestamp);

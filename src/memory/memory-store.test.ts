@@ -490,9 +490,7 @@ describe('MemoryStore', () => {
 
     store.saveChunks([chunk]);
     expect(store.chunkExists(chunk)).toBe(true);
-    expect(
-      store.chunkExists({ ...chunk, text: 'different text' }),
-    ).toBe(false);
+    expect(store.chunkExists({ ...chunk, text: 'different text' })).toBe(false);
   });
 
   it('saveItemEmbedding stores and updates embeddings', () => {
@@ -865,9 +863,7 @@ describe('MemoryStore', () => {
     db.close();
 
     // recordRetrievalSignal should handle the corrupt JSON gracefully
-    expect(() =>
-      store.recordRetrievalSignal(item.id, 0.5, 'q1'),
-    ).not.toThrow();
+    expect(() => store.recordRetrievalSignal(item.id, 0.5, 'q1')).not.toThrow();
 
     const updated = store.getItemById(item.id)!;
     expect(updated.retrieval_count).toBe(1);
@@ -1216,7 +1212,9 @@ describe('MemoryStore', () => {
     // Insert a valid embedding first, then corrupt it
     store.putCachedEmbedding('hash-corrupt', 'model', [0.1, 0.2]);
     const db = new Database(dbPath);
-    db.exec(`UPDATE embedding_cache SET embedding_json = '{bad' WHERE text_hash = 'hash-corrupt'`);
+    db.exec(
+      `UPDATE embedding_cache SET embedding_json = '{bad' WHERE text_hash = 'hash-corrupt'`,
+    );
     db.close();
 
     expect(store.getCachedEmbedding('hash-corrupt', 'model')).toBeNull();
@@ -1231,7 +1229,9 @@ describe('MemoryStore', () => {
 
     store.putCachedEmbedding('hash-obj', 'model', [0.1]);
     const db = new Database(dbPath);
-    db.exec(`UPDATE embedding_cache SET embedding_json = '{"a":1}' WHERE text_hash = 'hash-obj'`);
+    db.exec(
+      `UPDATE embedding_cache SET embedding_json = '{"a":1}' WHERE text_hash = 'hash-obj'`,
+    );
     db.close();
 
     expect(store.getCachedEmbedding('hash-obj', 'model')).toBeNull();
@@ -1246,7 +1246,9 @@ describe('MemoryStore', () => {
 
     store.putCachedEmbedding('hash-nan', 'model', [0.1]);
     const db = new Database(dbPath);
-    db.exec(`UPDATE embedding_cache SET embedding_json = '["not-a-number"]' WHERE text_hash = 'hash-nan'`);
+    db.exec(
+      `UPDATE embedding_cache SET embedding_json = '["not-a-number"]' WHERE text_hash = 'hash-nan'`,
+    );
     db.close();
 
     expect(store.getCachedEmbedding('hash-nan', 'model')).toBeNull();
@@ -1905,7 +1907,11 @@ describe('MemoryStore', () => {
       },
     ]);
 
-    const results = store.lexicalSearch('globally shared knowledge', '_global', 5);
+    const results = store.lexicalSearch(
+      'globally shared knowledge',
+      '_global',
+      5,
+    );
     expect(results.length).toBeGreaterThan(0);
   });
 

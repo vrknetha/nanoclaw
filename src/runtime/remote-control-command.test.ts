@@ -27,15 +27,14 @@ describe('asRemoteControlCommand', () => {
 
 describe('handleRemoteControlCommand', () => {
   const baseMsgFields = {
-    id: 1,
+    id: '1',
     chat_jid: 'group@g.us',
     sender: 'user@s.whatsapp.net',
     content: '/remote-control',
     timestamp: '2024-01-01T00:00:00.000Z',
     is_from_me: false,
-    message_id: 'msg-1',
-    reply_to_message_id: null,
-    reply_to_content: null,
+    reply_to_message_id: undefined,
+    reply_to_message_content: undefined,
     sender_name: 'User',
   } satisfies NewMessage;
 
@@ -43,10 +42,13 @@ describe('handleRemoteControlCommand', () => {
     const sent: string[] = [];
     return {
       name: 'test',
-      owns: () => true,
+      connect: async () => {},
       sendMessage: async (_jid: string, text: string) => {
         sent.push(text);
       },
+      isConnected: () => true,
+      ownsJid: () => true,
+      disconnect: async () => {},
       sent,
     };
   }

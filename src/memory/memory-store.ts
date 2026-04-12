@@ -40,6 +40,13 @@ export interface ChunkInsert {
 
 export class MemoryStore {
   private static readonly SCHEMA_VERSION = 3;
+  private static readonly PRAGMA_TABLE_ALLOWLIST = new Set([
+    'memory_items',
+    'memory_chunks',
+    'memory_procedures',
+    'memory_events',
+    'embedding_cache',
+  ]);
   private readonly db: Database.Database;
 
   constructor(dbPath = MEMORY_SQLITE_PATH) {
@@ -110,12 +117,16 @@ export class MemoryStore {
   }
 
   private setSchemaVersion(version: number): void {
-    this.db.pragma(`user_version = ${version}`);
+    const normalized = Math.max(0, Math.trunc(version));
+    this.db.pragma(`user_version = ${normalized}`);
   }
 
   private columnExists(tableName: string, columnName: string): boolean {
+    if (!MemoryStore.PRAGMA_TABLE_ALLOWLIST.has(tableName)) {
+      throw new Error(`Unsafe table name for PRAGMA table_info: ${tableName}`);
+    }
     const rows = this.db
-      .prepare(`PRAGMA table_info(${tableName})`)
+      .prepare(`PRAGMA table_info("${tableName}")`)
       .all() as Array<Record<string, unknown>>;
     return rows.some((row) => String(row.name) === columnName);
   }
@@ -682,11 +693,13 @@ export class MemoryStore {
   }
 
   bumpConfidence(ids: string[], delta: number): void {
+    if (Number.isNaN(delta)) return;
     if (delta <= 0) return;
     this.adjustConfidence(ids, delta);
   }
 
   adjustConfidence(ids: string[], delta: number): void {
+    if (Number.isNaN(delta)) return;
     if (delta === 0) return;
     const unique = [...new Set(ids.filter(Boolean))];
     if (unique.length === 0) return;

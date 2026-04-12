@@ -12,6 +12,188 @@ import {
   SaveProcedureInput,
 } from './memory-types.js';
 
+const MEMORY_IPC_REQUEST_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function parseOptionalString(
+  value: unknown,
+  opts: { maxLen?: number } = {},
+): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  if (opts.maxLen && trimmed.length > opts.maxLen) return undefined;
+  return trimmed;
+}
+
+function parseOptionalNumber(
+  value: unknown,
+  opts: { min?: number; max?: number } = {},
+): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
+  if (opts.min !== undefined && value < opts.min) return undefined;
+  if (opts.max !== undefined && value > opts.max) return undefined;
+  return value;
+}
+
+function parseOptionalTags(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const out: string[] = [];
+  for (const item of value) {
+    const parsed = parseOptionalString(item, { maxLen: 64 });
+    if (!parsed) return undefined;
+    out.push(parsed);
+  }
+  return out;
+}
+
+function parseMemoryScope(
+  value: unknown,
+): SaveMemoryInput['scope'] | SaveProcedureInput['scope'] | undefined {
+  const scope = parseOptionalString(value, { maxLen: 16 });
+  if (scope === 'user' || scope === 'group' || scope === 'global') return scope;
+  return undefined;
+}
+
+function parseMemoryKind(value: unknown): SaveMemoryInput['kind'] | undefined {
+  const kind = parseOptionalString(value, { maxLen: 32 });
+  if (
+    kind === 'preference' ||
+    kind === 'fact' ||
+    kind === 'context' ||
+    kind === 'correction' ||
+    kind === 'recent_work'
+  ) {
+    return kind;
+  }
+  return undefined;
+}
+
+function parseSaveMemoryInput(payload: unknown): SaveMemoryInput {
+  if (!isPlainObject(payload)) {
+    throw new Error('memory_save payload must be an object');
+  }
+  const key = parseOptionalString(payload.key, { maxLen: 256 });
+  const value = parseOptionalString(payload.value, { maxLen: 10_000 });
+  if (!key || !value) {
+    throw new Error('memory_save requires key and value');
+  }
+  const scope = parseMemoryScope(payload.scope);
+  const kind = parseMemoryKind(payload.kind);
+  const groupFolder = parseOptionalString(payload.group_folder, {
+    maxLen: 128,
+  });
+  const userId = parseOptionalString(payload.user_id, { maxLen: 255 });
+  const confidence = parseOptionalNumber(payload.confidence, {
+    min: 0,
+    max: 1,
+  });
+  const source = parseOptionalString(payload.source, { maxLen: 255 });
+  return {
+    key,
+    value,
+    ...(scope ? { scope } : {}),
+    ...(kind ? { kind } : {}),
+    ...(groupFolder ? { group_folder: groupFolder } : {}),
+    ...(userId ? { user_id: userId } : {}),
+    ...(confidence !== undefined ? { confidence } : {}),
+    ...(source ? { source } : {}),
+  };
+}
+
+function parsePatchMemoryInput(payload: unknown): PatchMemoryInput {
+  if (!isPlainObject(payload)) {
+    throw new Error('memory_patch payload must be an object');
+  }
+  const id = parseOptionalString(payload.id, { maxLen: 128 });
+  const expectedVersion = parseOptionalNumber(payload.expected_version, {
+    min: 1,
+  });
+  if (!id || expectedVersion === undefined) {
+    throw new Error('memory_patch requires id and expected_version');
+  }
+  const key = parseOptionalString(payload.key, { maxLen: 256 });
+  const value = parseOptionalString(payload.value, { maxLen: 10_000 });
+  const confidence = parseOptionalNumber(payload.confidence, {
+    min: 0,
+    max: 1,
+  });
+  return {
+    id,
+    expected_version: Math.round(expectedVersion),
+    ...(key ? { key } : {}),
+    ...(value ? { value } : {}),
+    ...(confidence !== undefined ? { confidence } : {}),
+  };
+}
+
+function assertValidRequestId(requestId: string): void {
+  if (!MEMORY_IPC_REQUEST_ID_PATTERN.test(requestId)) {
+    throw new Error('Invalid memory IPC requestId');
+  }
+}
+
+function parseSaveProcedureInput(payload: unknown): SaveProcedureInput {
+  if (!isPlainObject(payload)) {
+    throw new Error('procedure_save payload must be an object');
+  }
+  const title = parseOptionalString(payload.title, { maxLen: 256 });
+  const body = parseOptionalString(payload.body, { maxLen: 50_000 });
+  if (!title || !body) {
+    throw new Error('procedure_save requires title and body');
+  }
+  const scope = parseMemoryScope(payload.scope);
+  const groupFolder = parseOptionalString(payload.group_folder, {
+    maxLen: 128,
+  });
+  const tags = parseOptionalTags(payload.tags);
+  const confidence = parseOptionalNumber(payload.confidence, {
+    min: 0,
+    max: 1,
+  });
+  const source = parseOptionalString(payload.source, { maxLen: 255 });
+  return {
+    title,
+    body,
+    ...(scope ? { scope } : {}),
+    ...(groupFolder ? { group_folder: groupFolder } : {}),
+    ...(tags ? { tags } : {}),
+    ...(confidence !== undefined ? { confidence } : {}),
+    ...(source ? { source } : {}),
+  };
+}
+
+function parsePatchProcedureInput(payload: unknown): PatchProcedureInput {
+  if (!isPlainObject(payload)) {
+    throw new Error('procedure_patch payload must be an object');
+  }
+  const id = parseOptionalString(payload.id, { maxLen: 128 });
+  const expectedVersion = parseOptionalNumber(payload.expected_version, {
+    min: 1,
+  });
+  if (!id || expectedVersion === undefined) {
+    throw new Error('procedure_patch requires id and expected_version');
+  }
+  const title = parseOptionalString(payload.title, { maxLen: 256 });
+  const body = parseOptionalString(payload.body, { maxLen: 50_000 });
+  const tags = parseOptionalTags(payload.tags);
+  const confidence = parseOptionalNumber(payload.confidence, {
+    min: 0,
+    max: 1,
+  });
+  return {
+    id,
+    expected_version: Math.round(expectedVersion),
+    ...(title ? { title } : {}),
+    ...(body ? { body } : {}),
+    ...(tags ? { tags } : {}),
+    ...(confidence !== undefined ? { confidence } : {}),
+  };
+}
+
 export async function processMemoryRequest(
   request: MemoryIpcRequest,
   sourceGroup: string,
@@ -20,6 +202,7 @@ export async function processMemoryRequest(
   let provider = 'uninitialized';
 
   try {
+    assertValidRequestId(request.requestId);
     const memory = MemoryService.getInstance();
     provider = memory.getProviderName();
     logger.debug(
@@ -33,11 +216,9 @@ export async function processMemoryRequest(
         if (!query) {
           throw new Error('query is required');
         }
-        const requestedGroupFolder = request.payload.group_folder
-          ? String(request.payload.group_folder)
-          : undefined;
-        const groupFolder =
-          isMain && requestedGroupFolder ? requestedGroupFolder : sourceGroup;
+        // IPC memory reads are always scoped to the source group to prevent
+        // cross-group data access from agent processes.
+        const groupFolder = sourceGroup;
         const results = await memory.search({
           query,
           groupFolder,
@@ -56,13 +237,11 @@ export async function processMemoryRequest(
         };
       }
       case 'memory_save': {
-        const saved = await memory.saveMemory(
-          request.payload as unknown as SaveMemoryInput,
-          {
-            isMain,
-            groupFolder: sourceGroup,
-          },
-        );
+        const input = parseSaveMemoryInput(request.payload);
+        const saved = await memory.saveMemory(input, {
+          isMain,
+          groupFolder: sourceGroup,
+        });
         return {
           ok: true,
           requestId: request.requestId,
@@ -71,13 +250,11 @@ export async function processMemoryRequest(
         };
       }
       case 'memory_patch': {
-        const patched = memory.patchMemory(
-          request.payload as unknown as PatchMemoryInput,
-          {
-            isMain,
-            groupFolder: sourceGroup,
-          },
-        );
+        const input = parsePatchMemoryInput(request.payload);
+        const patched = memory.patchMemory(input, {
+          isMain,
+          groupFolder: sourceGroup,
+        });
         return {
           ok: true,
           requestId: request.requestId,
@@ -86,11 +263,7 @@ export async function processMemoryRequest(
         };
       }
       case 'memory_consolidate': {
-        const requestedGroupFolder = request.payload.group_folder
-          ? String(request.payload.group_folder)
-          : undefined;
-        const groupFolder =
-          isMain && requestedGroupFolder ? requestedGroupFolder : sourceGroup;
+        const groupFolder = sourceGroup;
         const result = await memory.consolidateGroupMemory(groupFolder);
         return {
           ok: true,
@@ -100,11 +273,7 @@ export async function processMemoryRequest(
         };
       }
       case 'memory_dream': {
-        const requestedGroupFolder = request.payload.group_folder
-          ? String(request.payload.group_folder)
-          : undefined;
-        const groupFolder =
-          isMain && requestedGroupFolder ? requestedGroupFolder : sourceGroup;
+        const groupFolder = sourceGroup;
         const result = await memory.runDreamingSweep(groupFolder);
         return {
           ok: true,
@@ -114,13 +283,11 @@ export async function processMemoryRequest(
         };
       }
       case 'procedure_save': {
-        const saved = memory.saveProcedure(
-          request.payload as unknown as SaveProcedureInput,
-          {
-            isMain,
-            groupFolder: sourceGroup,
-          },
-        );
+        const input = parseSaveProcedureInput(request.payload);
+        const saved = memory.saveProcedure(input, {
+          isMain,
+          groupFolder: sourceGroup,
+        });
         return {
           ok: true,
           requestId: request.requestId,
@@ -129,13 +296,11 @@ export async function processMemoryRequest(
         };
       }
       case 'procedure_patch': {
-        const patched = memory.patchProcedure(
-          request.payload as unknown as PatchProcedureInput,
-          {
-            isMain,
-            groupFolder: sourceGroup,
-          },
-        );
+        const input = parsePatchProcedureInput(request.payload);
+        const patched = memory.patchProcedure(input, {
+          isMain,
+          groupFolder: sourceGroup,
+        });
         return {
           ok: true,
           requestId: request.requestId,
@@ -163,6 +328,7 @@ export function writeMemoryResponse(
   requestId: string,
   response: MemoryIpcResponse,
 ): void {
+  assertValidRequestId(requestId);
   const ipcDir = resolveGroupIpcPath(groupFolder);
   const responsesDir = path.join(ipcDir, 'memory-responses');
   fs.mkdirSync(responsesDir, { recursive: true });

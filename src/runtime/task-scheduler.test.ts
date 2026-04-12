@@ -427,9 +427,7 @@ describe('computeNextJobRun', () => {
     // anchor + 60000 = 09:59:00 <= now -> skip
     // anchor + 120000 = 10:00:00 <= now -> skip (next <= now)
     // anchor + 180000 = 10:01:00 > now -> return
-    expect(nextTime).toBe(
-      new Date('2026-04-12T10:01:00.000Z').getTime(),
-    );
+    expect(nextTime).toBe(new Date('2026-04-12T10:01:00.000Z').getTime());
   });
 
   it('interval: uses now when scheduledFor is null', () => {
@@ -543,7 +541,11 @@ describe('job lease management', () => {
       status: 'active',
     });
     // First call succeeds (active -> running)
-    markJobRunning('lease-2', 'run-1', new Date(Date.now() + 300_000).toISOString());
+    markJobRunning(
+      'lease-2',
+      'run-1',
+      new Date(Date.now() + 300_000).toISOString(),
+    );
     // Second call fails (already running)
     const success = markJobRunning(
       'lease-2',
@@ -618,33 +620,39 @@ describe('scheduler loop', () => {
     vi.useRealTimers();
   });
 
-  function makeDeps(overrides?: Partial<{
-    registeredGroups: () => Record<string, any>;
-    getSessions: () => Record<string, string>;
-    enqueueTask: (...args: any[]) => void;
-    closeStdin: () => void;
-    notifyIdle: () => void;
-    onProcess: () => void;
-    sendMessage: (...args: any[]) => Promise<void>;
-    onSchedulerChanged: () => void;
-  }>) {
+  function makeDeps(
+    overrides?: Partial<{
+      registeredGroups: () => Record<string, any>;
+      getSessions: () => Record<string, string>;
+      enqueueTask: (...args: any[]) => void;
+      closeStdin: () => void;
+      notifyIdle: () => void;
+      onProcess: () => void;
+      sendMessage: (...args: any[]) => Promise<void>;
+      onSchedulerChanged: () => void;
+    }>,
+  ) {
     return {
-      registeredGroups: overrides?.registeredGroups ?? (() => ({
-        'group@g.us': {
-          name: 'Main',
-          folder: 'main',
-          trigger: '@Andy',
-          added_at: '2026-01-01T00:00:00.000Z',
-          isMain: true,
-        },
-      })),
+      registeredGroups:
+        overrides?.registeredGroups ??
+        (() => ({
+          'group@g.us': {
+            name: 'Main',
+            folder: 'main',
+            trigger: '@Andy',
+            added_at: '2026-01-01T00:00:00.000Z',
+            isMain: true,
+          },
+        })),
       getSessions: overrides?.getSessions ?? (() => ({})),
       queue: {
-        enqueueTask: overrides?.enqueueTask ?? vi.fn(
-          (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
-            void fn();
-          },
-        ),
+        enqueueTask:
+          overrides?.enqueueTask ??
+          vi.fn(
+            (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+              void fn();
+            },
+          ),
         closeStdin: overrides?.closeStdin ?? vi.fn(),
         notifyIdle: overrides?.notifyIdle ?? vi.fn(),
       } as any,
@@ -758,7 +766,7 @@ describe('scheduler loop', () => {
       schedule_type: 'once',
       schedule_value: new Date(Date.now() - 60_000).toISOString(),
       linked_sessions: ['group@g.us'],
-      group_scope: 'other-folder',  // Doesn't match any group's folder
+      group_scope: 'other-folder', // Doesn't match any group's folder
       created_by: 'agent',
       next_run: new Date(Date.now() - 60_000).toISOString(),
       status: 'active',
@@ -1069,7 +1077,7 @@ describe('scheduler loop', () => {
       prompt: 'test',
       schedule_type: 'once',
       schedule_value: new Date(Date.now() - 60_000).toISOString(),
-      linked_sessions: ['group@g.us', 'other@g.us', 'group@g.us'],  // duplicate
+      linked_sessions: ['group@g.us', 'other@g.us', 'group@g.us'], // duplicate
       group_scope: 'main',
       created_by: 'agent',
       next_run: new Date(Date.now() - 60_000).toISOString(),
@@ -1078,38 +1086,34 @@ describe('scheduler loop', () => {
 
     // We need both groups registered so the job can resolve
     const sendMessage = vi.fn(async () => {});
-    startSchedulerLoop(makeDeps({
-      registeredGroups: () => ({
-        'group@g.us': {
-          name: 'Main',
-          folder: 'main',
-          trigger: '@Andy',
-          added_at: '2026-01-01T00:00:00.000Z',
-          isMain: true,
-        },
-        'other@g.us': {
-          name: 'Other',
-          folder: 'other',
-          trigger: '@Andy',
-          added_at: '2026-01-01T00:00:00.000Z',
-        },
+    startSchedulerLoop(
+      makeDeps({
+        registeredGroups: () => ({
+          'group@g.us': {
+            name: 'Main',
+            folder: 'main',
+            trigger: '@Andy',
+            added_at: '2026-01-01T00:00:00.000Z',
+            isMain: true,
+          },
+          'other@g.us': {
+            name: 'Other',
+            folder: 'other',
+            trigger: '@Andy',
+            added_at: '2026-01-01T00:00:00.000Z',
+          },
+        }),
+        sendMessage,
       }),
-      sendMessage,
-    }));
+    );
     await vi.advanceTimersByTimeAsync(20);
     await Promise.resolve();
     await Promise.resolve();
 
     // Should send to 2 unique jids (deduped), not 3
     expect(sendMessage).toHaveBeenCalledTimes(2);
-    expect(sendMessage).toHaveBeenCalledWith(
-      'group@g.us',
-      expect.any(String),
-    );
-    expect(sendMessage).toHaveBeenCalledWith(
-      'other@g.us',
-      expect.any(String),
-    );
+    expect(sendMessage).toHaveBeenCalledWith('group@g.us', expect.any(String));
+    expect(sendMessage).toHaveBeenCalledWith('other@g.us', expect.any(String));
   });
 
   it('calls reflectAfterTurn after successful non-system job', async () => {
@@ -1442,33 +1446,39 @@ describe('scheduler coverage: streaming callback and edge cases', () => {
     vi.useRealTimers();
   });
 
-  function makeDeps(overrides?: Partial<{
-    registeredGroups: () => Record<string, any>;
-    getSessions: () => Record<string, string>;
-    enqueueTask: (...args: any[]) => void;
-    closeStdin: () => void;
-    notifyIdle: () => void;
-    onProcess: () => void;
-    sendMessage: (...args: any[]) => Promise<void>;
-    onSchedulerChanged: () => void;
-  }>) {
+  function makeDeps(
+    overrides?: Partial<{
+      registeredGroups: () => Record<string, any>;
+      getSessions: () => Record<string, string>;
+      enqueueTask: (...args: any[]) => void;
+      closeStdin: () => void;
+      notifyIdle: () => void;
+      onProcess: () => void;
+      sendMessage: (...args: any[]) => Promise<void>;
+      onSchedulerChanged: () => void;
+    }>,
+  ) {
     return {
-      registeredGroups: overrides?.registeredGroups ?? (() => ({
-        'group@g.us': {
-          name: 'Main',
-          folder: 'main',
-          trigger: '@Andy',
-          added_at: '2026-01-01T00:00:00.000Z',
-          isMain: true,
-        },
-      })),
+      registeredGroups:
+        overrides?.registeredGroups ??
+        (() => ({
+          'group@g.us': {
+            name: 'Main',
+            folder: 'main',
+            trigger: '@Andy',
+            added_at: '2026-01-01T00:00:00.000Z',
+            isMain: true,
+          },
+        })),
       getSessions: overrides?.getSessions ?? (() => ({})),
       queue: {
-        enqueueTask: overrides?.enqueueTask ?? vi.fn(
-          (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
-            void fn();
-          },
-        ),
+        enqueueTask:
+          overrides?.enqueueTask ??
+          vi.fn(
+            (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+              void fn();
+            },
+          ),
         closeStdin: overrides?.closeStdin ?? vi.fn(),
         notifyIdle: overrides?.notifyIdle ?? vi.fn(),
       } as any,
@@ -1489,7 +1499,11 @@ describe('scheduler coverage: streaming callback and edge cases', () => {
         if (onOutput) {
           await onOutput({ status: 'success', result: 'streamed result' });
         }
-        return { status: 'success', result: 'final result', newSessionId: 'sess-1' };
+        return {
+          status: 'success',
+          result: 'final result',
+          newSessionId: 'sess-1',
+        };
       },
     );
 
@@ -1522,7 +1536,11 @@ describe('scheduler coverage: streaming callback and edge cases', () => {
     vi.mocked(spawnAgent).mockImplementationOnce(
       async (_group, _input, _onProcess, onOutput, _options) => {
         if (onOutput) {
-          await onOutput({ status: 'error', result: null, error: 'stream error' });
+          await onOutput({
+            status: 'error',
+            result: null,
+            error: 'stream error',
+          });
         }
         return { status: 'success', result: null, newSessionId: 'sess-1' };
       },
@@ -2017,7 +2035,9 @@ describe('scheduler coverage: streaming callback and edge cases', () => {
 
     const job = getJobById('scheduled-for');
     // Next run should be anchored from specificTime
-    const expected = new Date(new Date(specificTime).getTime() + 3600000).toISOString();
+    const expected = new Date(
+      new Date(specificTime).getTime() + 3600000,
+    ).toISOString();
     expect(job?.next_run).toBe(expected);
   });
 
@@ -2091,7 +2111,7 @@ describe('scheduler coverage: streaming callback and edge cases', () => {
 
   it('handles non-Error thrown by resolveGroupFolderPath', async () => {
     vi.mocked(resolveGroupFolderPath).mockImplementationOnce(() => {
-      throw 'string-error-from-resolve';  // eslint-disable-line no-throw-literal
+      throw 'string-error-from-resolve'; // eslint-disable-line no-throw-literal
     });
 
     upsertJob({
@@ -2240,9 +2260,11 @@ describe('scheduler coverage: streaming callback and edge cases', () => {
       status: 'active',
     });
 
-    startSchedulerLoop(makeDeps({
-      getSessions: () => ({ main: 'existing-session-id' }),
-    }));
+    startSchedulerLoop(
+      makeDeps({
+        getSessions: () => ({ main: 'existing-session-id' }),
+      }),
+    );
     await vi.advanceTimersByTimeAsync(20);
     await Promise.resolve();
     await Promise.resolve();
@@ -2302,7 +2324,12 @@ describe('scheduler coverage: streaming callback and edge cases', () => {
           await onOutput({ status: 'success', result: 'result' });
         }
         // Return error to exercise more paths, but closeTimer was set
-        return { status: 'error', result: null, error: 'oops', newSessionId: 'sess-1' };
+        return {
+          status: 'error',
+          result: null,
+          error: 'oops',
+          newSessionId: 'sess-1',
+        };
       },
     );
 

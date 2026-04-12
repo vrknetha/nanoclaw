@@ -353,10 +353,7 @@ describe('trigger gating (requiresTrigger interaction)', () => {
 // --- findChannel (line 48 coverage) ---
 
 describe('findChannel', () => {
-  function makeFakeChannel(
-    name: string,
-    ownedJids: string[],
-  ): Channel {
+  function makeFakeChannel(name: string, ownedJids: string[]): Channel {
     return {
       name,
       connect: async () => {},

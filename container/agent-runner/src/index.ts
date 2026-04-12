@@ -606,6 +606,11 @@ async function runQuery(
             ...(process.env.NANOCLAW_IPC_DIR
               ? { NANOCLAW_IPC_DIR: process.env.NANOCLAW_IPC_DIR }
               : {}),
+            ...(process.env.NANOCLAW_IPC_AUTH_TOKEN
+              ? {
+                  NANOCLAW_IPC_AUTH_TOKEN: process.env.NANOCLAW_IPC_AUTH_TOKEN,
+                }
+              : {}),
           },
         },
       },

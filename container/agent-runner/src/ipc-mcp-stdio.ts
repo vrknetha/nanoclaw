@@ -17,6 +17,7 @@ const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
 const TASKS_DIR = path.join(IPC_DIR, 'tasks');
 const MEMORY_REQUESTS_DIR = path.join(IPC_DIR, 'memory-requests');
 const MEMORY_RESPONSES_DIR = path.join(IPC_DIR, 'memory-responses');
+const IPC_AUTH_TOKEN = process.env.NANOCLAW_IPC_AUTH_TOKEN || '';
 
 // Context from environment variables (set by the agent runner)
 const chatJid = process.env.NANOCLAW_CHAT_JID!;
@@ -31,7 +32,8 @@ function writeIpcFile(dir: string, data: object): string {
 
   // Atomic write: temp file then rename
   const tempPath = `${filepath}.tmp`;
-  fs.writeFileSync(tempPath, JSON.stringify(data, null, 2));
+  const envelope = IPC_AUTH_TOKEN ? { ...data, authToken: IPC_AUTH_TOKEN } : data;
+  fs.writeFileSync(tempPath, JSON.stringify(envelope, null, 2));
   fs.renameSync(tempPath, filepath);
 
   return filename;
@@ -60,7 +62,16 @@ async function requestMemoryAction(
   const tmpReqPath = `${reqPath}.tmp`;
   fs.writeFileSync(
     tmpReqPath,
-    JSON.stringify({ requestId, action, payload }, null, 2),
+    JSON.stringify(
+      {
+        requestId,
+        action,
+        payload,
+        ...(IPC_AUTH_TOKEN ? { authToken: IPC_AUTH_TOKEN } : {}),
+      },
+      null,
+      2,
+    ),
   );
   fs.renameSync(tmpReqPath, reqPath);
 
@@ -156,7 +167,6 @@ server.tool(
     schedule_value: z.string().default(''),
     linked_sessions: z.array(z.string()).optional(),
     group_scope: z.string().optional(),
-    script: z.string().optional(),
     timeout_ms: z.number().optional(),
     max_retries: z.number().optional(),
     retry_backoff_ms: z.number().optional(),
@@ -201,7 +211,6 @@ server.tool(
       schedule_value: args.schedule_value,
       linkedSessions: args.linked_sessions,
       groupScope: args.group_scope,
-      script: args.script,
       timeoutMs: args.timeout_ms,
       maxRetries: args.max_retries,
       retryBackoffMs: args.retry_backoff_ms,
@@ -276,7 +285,6 @@ server.tool(
     schedule_value: z.string().optional(),
     linked_sessions: z.array(z.string()).optional(),
     group_scope: z.string().optional(),
-    script: z.string().optional(),
     timeout_ms: z.number().optional(),
     max_retries: z.number().optional(),
     retry_backoff_ms: z.number().optional(),
@@ -292,7 +300,6 @@ server.tool(
       schedule_value: args.schedule_value,
       linkedSessions: args.linked_sessions,
       groupScope: args.group_scope,
-      script: args.script,
       timeoutMs: args.timeout_ms,
       maxRetries: args.max_retries,
       retryBackoffMs: args.retry_backoff_ms,

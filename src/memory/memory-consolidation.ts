@@ -291,6 +291,7 @@ async function tryMergeWithAnthropic(
     const key = typeof parsed.key === 'string' ? parsed.key.trim() : '';
     const value = typeof parsed.value === 'string' ? parsed.value.trim() : '';
     const confidence = Number(parsed.confidence);
+    const allowedIds = new Set(items.map((item) => item.id));
     const retiredIds = Array.isArray(parsed.retired_ids)
       ? parsed.retired_ids
           .filter(
@@ -298,6 +299,7 @@ async function tryMergeWithAnthropic(
               typeof id === 'string' && id.trim().length > 0,
           )
           .map((id) => id.trim())
+          .filter((id) => allowedIds.has(id))
       : [];
 
     if (!key || !value) return null;

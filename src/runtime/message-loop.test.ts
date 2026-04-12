@@ -36,9 +36,7 @@ vi.mock('../messaging/router.js', () => ({
 import { MessageLoopDeps, recoverPendingMessages } from './message-loop.js';
 import { Channel, RegisteredGroup } from '../core/types.js';
 
-function makeDeps(
-  overrides: Partial<MessageLoopDeps> = {},
-): MessageLoopDeps & {
+function makeDeps(overrides: Partial<MessageLoopDeps> = {}): MessageLoopDeps & {
   enqueued: string[];
   cursors: Record<string, string>;
   sentTo: string[];

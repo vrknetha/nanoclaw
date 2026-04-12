@@ -35,6 +35,7 @@ import {
   upsertJob,
 } from './db.js';
 import { formatMessages } from '../messaging/router.js';
+import { RegisteredGroup } from '../core/types.js';
 
 beforeEach(() => {
   _initTestDatabase();
@@ -2045,6 +2046,48 @@ describe('registered group agentConfig model', () => {
       ],
     });
   });
+
+  it('drops invalid agentConfig payloads instead of throwing', () => {
+    setRegisteredGroup('group@g.us', {
+      name: 'Dev Chat',
+      folder: 'whatsapp_dev-chat',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+      agentConfig:
+        'invalid-config' as unknown as RegisteredGroup['agentConfig'],
+    });
+
+    const group = getRegisteredGroup('group@g.us');
+    expect(group?.agentConfig).toBeUndefined();
+  });
+
+  it('sanitizes malformed agentConfig mount entries', () => {
+    setRegisteredGroup('group@g.us', {
+      name: 'Dev Chat',
+      folder: 'whatsapp_dev-chat',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+      agentConfig: {
+        model: 'sonnet',
+        additionalMounts: [
+          { hostPath: '/tmp/repo', containerPath: 'repo', readonly: true },
+          { hostPath: '' } as unknown as {
+            hostPath: string;
+            containerPath?: string;
+            readonly?: boolean;
+          },
+        ],
+      },
+    });
+
+    const group = getRegisteredGroup('group@g.us');
+    expect(group?.agentConfig).toEqual({
+      model: 'sonnet',
+      additionalMounts: [
+        { hostPath: '/tmp/repo', containerPath: 'repo', readonly: true },
+      ],
+    });
+  });
 });
 
 // --- _closeDatabase ---
@@ -2153,8 +2196,8 @@ describe('migrateJsonState via initDatabase', () => {
         last_agent_timestamp: { 'group@g.us': '2024-01-01T00:01:00.000Z' },
       }),
       '/tmp/test-data/sessions.json': JSON.stringify({
-        'whatsapp_main': 'session-123',
-        'whatsapp_dev': 'session-456',
+        whatsapp_main: 'session-123',
+        whatsapp_dev: 'session-456',
       }),
       '/tmp/test-data/registered_groups.json': JSON.stringify({
         'group@g.us': {
@@ -2194,7 +2237,10 @@ describe('migrateJsonState via initDatabase', () => {
     });
 
     vi.doMock('../core/config.js', async () => {
-      const real = await vi.importActual<typeof import('../core/config.js')>('../core/config.js');
+      const real =
+        await vi.importActual<typeof import('../core/config.js')>(
+          '../core/config.js',
+        );
       return {
         ...real,
         DATA_DIR: '/tmp/test-data',
@@ -2206,7 +2252,9 @@ describe('migrateJsonState via initDatabase', () => {
     db.initDatabase();
 
     // Verify migrations occurred
-    expect(db.getRouterState('last_timestamp')).toBe('2024-01-01T00:00:00.000Z');
+    expect(db.getRouterState('last_timestamp')).toBe(
+      '2024-01-01T00:00:00.000Z',
+    );
     expect(db.getRouterState('last_agent_timestamp')).toBe(
       JSON.stringify({ 'group@g.us': '2024-01-01T00:01:00.000Z' }),
     );
@@ -2254,7 +2302,10 @@ describe('migrateJsonState via initDatabase', () => {
     });
 
     vi.doMock('../core/config.js', async () => {
-      const real = await vi.importActual<typeof import('../core/config.js')>('../core/config.js');
+      const real =
+        await vi.importActual<typeof import('../core/config.js')>(
+          '../core/config.js',
+        );
       return {
         ...real,
         DATA_DIR: '/tmp/test-data-empty',
@@ -2306,7 +2357,10 @@ describe('migrateJsonState via initDatabase', () => {
     });
 
     vi.doMock('../core/config.js', async () => {
-      const real = await vi.importActual<typeof import('../core/config.js')>('../core/config.js');
+      const real =
+        await vi.importActual<typeof import('../core/config.js')>(
+          '../core/config.js',
+        );
       return {
         ...real,
         DATA_DIR: '/tmp/test-data-malformed',
@@ -2367,7 +2421,10 @@ describe('migrateJsonState via initDatabase', () => {
     });
 
     vi.doMock('../core/config.js', async () => {
-      const real = await vi.importActual<typeof import('../core/config.js')>('../core/config.js');
+      const real =
+        await vi.importActual<typeof import('../core/config.js')>(
+          '../core/config.js',
+        );
       return {
         ...real,
         DATA_DIR: '/tmp/test-data-bad-groups',
@@ -2407,7 +2464,9 @@ describe('migrateJsonState via initDatabase', () => {
           },
           readFileSync: (p: string, enc?: string) => {
             if (p.includes('router_state.json')) {
-              return JSON.stringify({ last_timestamp: '2024-06-01T00:00:00.000Z' });
+              return JSON.stringify({
+                last_timestamp: '2024-06-01T00:00:00.000Z',
+              });
             }
             return realFs.readFileSync(p, enc as BufferEncoding);
           },
@@ -2421,7 +2480,10 @@ describe('migrateJsonState via initDatabase', () => {
     });
 
     vi.doMock('../core/config.js', async () => {
-      const real = await vi.importActual<typeof import('../core/config.js')>('../core/config.js');
+      const real =
+        await vi.importActual<typeof import('../core/config.js')>(
+          '../core/config.js',
+        );
       return {
         ...real,
         DATA_DIR: '/tmp/test-data-partial-router',
@@ -2432,7 +2494,9 @@ describe('migrateJsonState via initDatabase', () => {
     const db = await import('./db.js');
     db.initDatabase();
 
-    expect(db.getRouterState('last_timestamp')).toBe('2024-06-01T00:00:00.000Z');
+    expect(db.getRouterState('last_timestamp')).toBe(
+      '2024-06-01T00:00:00.000Z',
+    );
     expect(db.getRouterState('last_agent_timestamp')).toBeUndefined();
 
     const realFs = await vi.importActual<typeof import('fs')>('fs');

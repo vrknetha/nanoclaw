@@ -267,12 +267,7 @@ describe('syncGroupSkills', () => {
     fs.writeFileSync(path.join(skillSrc, 'SKILL.md'), 'v1');
 
     // Create destination skill with a NEWER SKILL.md
-    const skillDst = path.join(
-      configRoot,
-      '.claude',
-      'skills',
-      'up-to-date',
-    );
+    const skillDst = path.join(configRoot, '.claude', 'skills', 'up-to-date');
     fs.mkdirSync(skillDst, { recursive: true });
     // Write destination first, then backdate source so dst is newer
     fs.writeFileSync(path.join(skillDst, 'SKILL.md'), 'already-here');
@@ -292,9 +287,9 @@ describe('syncGroupSkills', () => {
     syncGroupSkills();
 
     // Destination content should be unchanged
-    expect(
-      fs.readFileSync(path.join(skillDst, 'SKILL.md'), 'utf-8'),
-    ).toBe('already-here');
+    expect(fs.readFileSync(path.join(skillDst, 'SKILL.md'), 'utf-8')).toBe(
+      'already-here',
+    );
   });
 
   it('skips non-directory entries in source skills folder', async () => {
@@ -326,10 +321,7 @@ describe('syncGroupSkills', () => {
     // Only the real-skill directory should appear, not README.md
     expect(entries).toEqual(['real-skill']);
     expect(
-      fs.readFileSync(
-        path.join(dstSkills, 'real-skill', 'SKILL.md'),
-        'utf-8',
-      ),
+      fs.readFileSync(path.join(dstSkills, 'real-skill', 'SKILL.md'), 'utf-8'),
     ).toBe('# real');
   });
 });

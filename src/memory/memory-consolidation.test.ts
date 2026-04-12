@@ -413,7 +413,10 @@ describe('consolidateMemoryItems', () => {
       new Response(
         JSON.stringify({
           content: [
-            { type: 'text', text: 'Here is the merged fact but no JSON braces' },
+            {
+              type: 'text',
+              text: 'Here is the merged fact but no JSON braces',
+            },
           ],
         }),
         { status: 200 },
@@ -531,9 +534,11 @@ describe('consolidateMemoryItems', () => {
 
     vi.stubEnv('ANTHROPIC_API_KEY', 'sk-test-key');
 
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response('Internal Server Error', { status: 500 }),
-    );
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(
+        new Response('Internal Server Error', { status: 500 }),
+      );
 
     const embeddings = stubEmbeddings(() => vector(1));
 
@@ -857,6 +862,51 @@ describe('consolidateMemoryItems', () => {
     vi.unstubAllEnvs();
   });
 
+  it('filters retired_ids to cluster members only', async () => {
+    const store = makeStore();
+    const item1 = addItem(store, { key: 'retf:a', value: 'val1' });
+    const item2 = addItem(store, { key: 'retf:b', value: 'val2' });
+
+    vi.stubEnv('ANTHROPIC_API_KEY', 'sk-test-key');
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                key: 'retf:merged',
+                value: 'merged value',
+                confidence: 0.9,
+                retired_ids: ['outside-id', item1.id, item2.id],
+              }),
+            },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const embeddings = stubEmbeddings(() => vector(1));
+
+    const result = await consolidateMemoryItems({
+      groupFolder: 'team',
+      store,
+      embeddings,
+      minItems: 2,
+      clusterThreshold: 0.8,
+      maxClusters: 5,
+    });
+
+    expect(result.mode).toBe('llm');
+    const active = store.listActiveItems('team', 20);
+    expect(active.find((item) => item.id === item1.id)).toBeUndefined();
+    expect(active.find((item) => item.id === item2.id)).toBeUndefined();
+    fetchSpy.mockRestore();
+    vi.unstubAllEnvs();
+  });
+
   // ── parseEmbedding: array with non-numeric strings ─────────────────
 
   it('treats embedding_json with non-numeric array values as missing', async () => {
@@ -1173,8 +1223,16 @@ describe('consolidateMemoryItems', () => {
     // Instead, focus on what we CAN cover: the ranking/sorting in heuristic merge
     // with items that have equal confidence but different updated_at.
     const store = makeStore();
-    const item1 = addItem(store, { key: 'rank:a', value: 'alpha value text', confidence: 0.8 });
-    const item2 = addItem(store, { key: 'rank:b', value: 'beta', confidence: 0.8 });
+    const item1 = addItem(store, {
+      key: 'rank:a',
+      value: 'alpha value text',
+      confidence: 0.8,
+    });
+    const item2 = addItem(store, {
+      key: 'rank:b',
+      value: 'beta',
+      confidence: 0.8,
+    });
 
     const embeddings = stubEmbeddings(() => vector(1));
 

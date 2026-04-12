@@ -128,10 +128,12 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
       deps.getRegisteredJids(),
     );
 
+    let pendingSessionId: string | null = null;
+
     const wrappedOnOutput = onOutput
       ? async (output: AgentOutput) => {
-          if (output.newSessionId) {
-            deps.setSession(group.folder, output.newSessionId);
+          if (output.status !== 'error' && output.newSessionId) {
+            pendingSessionId = output.newSessionId;
           }
           await onOutput(output);
         }
@@ -159,10 +161,6 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
         wrappedOnOutput,
         options,
       );
-
-      if (output.newSessionId) {
-        deps.setSession(group.folder, output.newSessionId);
-      }
 
       if (output.status === 'error') {
         const staleSessionId = sessionId || '';
@@ -198,6 +196,11 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
           'Container agent error',
         );
         return 'error';
+      }
+
+      const nextSessionId = output.newSessionId || pendingSessionId;
+      if (nextSessionId) {
+        deps.setSession(group.folder, nextSessionId);
       }
 
       return 'success';

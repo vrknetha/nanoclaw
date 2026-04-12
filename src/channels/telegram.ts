@@ -16,6 +16,8 @@ import {
   RegisteredGroup,
 } from '../core/types.js';
 
+const TELEGRAM_MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024;
+
 export interface TelegramChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
@@ -57,6 +59,118 @@ export class TelegramChannel implements Channel {
   constructor(botToken: string, opts: TelegramChannelOpts) {
     this.botToken = botToken;
     this.opts = opts;
+  }
+
+  private redactBotToken(input: string): string {
+    if (!input) return input;
+    return input.split(this.botToken).join('[REDACTED_BOT_TOKEN]');
+  }
+
+  private sanitizeErrorMessage(err: unknown): string {
+    const message =
+      err instanceof Error
+        ? err.message
+        : typeof err === 'object' &&
+            err !== null &&
+            'message' in err &&
+            typeof (err as { message?: unknown }).message === 'string'
+          ? ((err as { message: string }).message ?? '')
+          : String(err);
+    return this.redactBotToken(message);
+  }
+
+  private async writeFetchResponseToFile(
+    response: {
+      body?: {
+        getReader?: () => {
+          read: () => Promise<{ done: boolean; value?: Uint8Array }>;
+        };
+      } | null;
+      arrayBuffer?: () => Promise<ArrayBuffer>;
+      headers?: { get: (name: string) => string | null };
+    },
+    destPath: string,
+  ): Promise<boolean> {
+    const declaredLength = Number(response.headers?.get('content-length'));
+    if (
+      Number.isFinite(declaredLength) &&
+      declaredLength > TELEGRAM_MAX_DOWNLOAD_BYTES
+    ) {
+      logger.warn(
+        {
+          declaredLength,
+          maxBytes: TELEGRAM_MAX_DOWNLOAD_BYTES,
+        },
+        'Telegram file exceeds max allowed size',
+      );
+      return false;
+    }
+
+    const reader = response.body?.getReader?.();
+    if (!reader) {
+      if (!response.arrayBuffer) {
+        throw new Error('Telegram download response body is missing');
+      }
+      const buffer = Buffer.from(await response.arrayBuffer());
+      if (buffer.byteLength > TELEGRAM_MAX_DOWNLOAD_BYTES) {
+        logger.warn(
+          {
+            bytes: buffer.byteLength,
+            maxBytes: TELEGRAM_MAX_DOWNLOAD_BYTES,
+          },
+          'Telegram file exceeds max allowed size',
+        );
+        return false;
+      }
+      fs.writeFileSync(destPath, buffer);
+      return true;
+    }
+
+    const fd = fs.openSync(destPath, 'w');
+    let totalBytes = 0;
+    let shouldCleanup = false;
+    try {
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        const value = chunk.value;
+        if (!value || value.byteLength === 0) continue;
+        totalBytes += value.byteLength;
+        if (totalBytes > TELEGRAM_MAX_DOWNLOAD_BYTES) {
+          shouldCleanup = true;
+          logger.warn(
+            {
+              bytes: totalBytes,
+              maxBytes: TELEGRAM_MAX_DOWNLOAD_BYTES,
+            },
+            'Telegram file exceeds max allowed size',
+          );
+          return false;
+        }
+        fs.writeSync(fd, Buffer.from(value));
+      }
+      return true;
+    } catch (err) {
+      shouldCleanup = true;
+      throw err;
+    } finally {
+      fs.closeSync(fd);
+      if (shouldCleanup) {
+        try {
+          fs.unlinkSync(destPath);
+        } catch {
+          // ignore cleanup errors
+        }
+      }
+    }
+  }
+
+  private sanitizeTelegramFilePath(rawPath: string): string | null {
+    const normalized = rawPath.replace(/\\/g, '/').trim();
+    if (!normalized) return null;
+    if (normalized.startsWith('/') || normalized.includes('..')) return null;
+    if (!/^[a-zA-Z0-9._/-]+$/.test(normalized)) return null;
+    return normalized;
   }
 
   private clearPollingRetryTimer(): void {
@@ -122,19 +236,31 @@ export class TelegramChannel implements Channel {
         logger.warn({ fileId }, 'Telegram getFile returned no file_path');
         return null;
       }
+      const safeFilePath = this.sanitizeTelegramFilePath(file.file_path);
+      if (!safeFilePath) {
+        logger.warn(
+          { fileId, filePath: '[unsafe-file-path]' },
+          'Rejected unsafe Telegram file path',
+        );
+        return null;
+      }
 
       const groupDir = resolveGroupFolderPath(groupFolder);
       const attachDir = path.join(groupDir, 'attachments');
       fs.mkdirSync(attachDir, { recursive: true });
 
       // Sanitize filename and add extension from Telegram's file_path if missing
-      const tgExt = path.extname(file.file_path);
+      const tgExt = path.extname(safeFilePath);
       const localExt = path.extname(filename);
       const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
       const finalName = localExt ? safeName : `${safeName}${tgExt}`;
       const destPath = path.join(attachDir, finalName);
 
-      const fileUrl = `https://api.telegram.org/file/bot${this.botToken}/${file.file_path}`;
+      const encodedPath = safeFilePath
+        .split('/')
+        .map((segment) => encodeURIComponent(segment))
+        .join('/');
+      const fileUrl = `https://api.telegram.org/file/bot${this.botToken}/${encodedPath}`;
       const resp = await fetch(fileUrl);
       if (!resp.ok) {
         logger.warn(
@@ -144,13 +270,16 @@ export class TelegramChannel implements Channel {
         return null;
       }
 
-      const buffer = Buffer.from(await resp.arrayBuffer());
-      fs.writeFileSync(destPath, buffer);
+      const wrote = await this.writeFetchResponseToFile(resp, destPath);
+      if (!wrote) return null;
 
       logger.info({ fileId, dest: destPath }, 'Telegram file downloaded');
       return `/workspace/group/attachments/${finalName}`;
     } catch (err) {
-      logger.error({ fileId, err }, 'Failed to download Telegram file');
+      logger.error(
+        { fileId, error: this.sanitizeErrorMessage(err) },
+        'Failed to download Telegram file',
+      );
       return null;
     }
   }
@@ -390,7 +519,10 @@ export class TelegramChannel implements Channel {
 
     // Handle errors gracefully
     this.bot.catch((err) => {
-      logger.error({ err: err.message }, 'Telegram bot error');
+      logger.error(
+        { error: this.sanitizeErrorMessage(err) },
+        'Telegram bot error',
+      );
     });
 
     this.startPolling();
@@ -431,7 +563,10 @@ export class TelegramChannel implements Channel {
         'Telegram message sent',
       );
     } catch (err) {
-      logger.error({ jid, err }, 'Failed to send Telegram message');
+      logger.error(
+        { jid, error: this.sanitizeErrorMessage(err) },
+        'Failed to send Telegram message',
+      );
     }
   }
 

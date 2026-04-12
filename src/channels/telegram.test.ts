@@ -786,6 +786,44 @@ describe('TelegramChannel', () => {
       );
     });
 
+    it('falls back to placeholder when file exceeds max size via content-length', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      currentBot().api.getFile.mockResolvedValueOnce({
+        file_path: 'photos/file_0.jpg',
+      });
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          headers: {
+            get: (name: string) =>
+              name === 'content-length' ? String(60 * 1024 * 1024) : null,
+          },
+          arrayBuffer: vi.fn().mockResolvedValue(new ArrayBuffer(8)),
+        }),
+      );
+
+      const ctx = createMediaCtx({
+        extra: { photo: [{ file_id: 'too_large_id', width: 800 }] },
+      });
+      await triggerMediaMessage('message:photo', ctx);
+      await flushPromises();
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'tg:100200300',
+        expect.objectContaining({ content: '[Photo]' }),
+      );
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          declaredLength: 60 * 1024 * 1024,
+        }),
+        'Telegram file exceeds max allowed size',
+      );
+    });
+
     it('falls back to placeholder when download fails', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
@@ -804,6 +842,63 @@ describe('TelegramChannel', () => {
       expect(opts.onMessage).toHaveBeenCalledWith(
         'tg:100200300',
         expect.objectContaining({ content: '[Photo] Check this' }),
+      );
+    });
+
+    it('rejects unsafe Telegram file paths', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      currentBot().api.getFile.mockResolvedValueOnce({
+        file_path: '../secrets/token.txt',
+      });
+
+      const ctx = createMediaCtx({
+        extra: { photo: [{ file_id: 'unsafe_path', width: 800 }] },
+      });
+      await triggerMediaMessage('message:photo', ctx);
+      await flushPromises();
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'tg:100200300',
+        expect.objectContaining({ content: '[Photo]' }),
+      );
+      expect(logger.warn).toHaveBeenCalledWith(
+        { fileId: 'unsafe_path', filePath: '[unsafe-file-path]' },
+        'Rejected unsafe Telegram file path',
+      );
+    });
+
+    it('redacts bot token in download error logs', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('super-secret-token', opts);
+      await channel.connect();
+
+      currentBot().api.getFile.mockResolvedValueOnce({
+        file_path: 'photos/file_0.jpg',
+      });
+      vi.stubGlobal(
+        'fetch',
+        vi
+          .fn()
+          .mockRejectedValue(
+            new Error('request failed for super-secret-token endpoint'),
+          ),
+      );
+
+      const ctx = createMediaCtx({
+        extra: { photo: [{ file_id: 'redact_test', width: 800 }] },
+      });
+      await triggerMediaMessage('message:photo', ctx);
+      await flushPromises();
+
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          fileId: 'redact_test',
+          error: expect.stringContaining('[REDACTED_BOT_TOKEN]'),
+        }),
+        'Failed to download Telegram file',
       );
     });
 
@@ -1237,7 +1332,7 @@ describe('TelegramChannel', () => {
 
       const { logger: mockLogger } = await import('../core/logger.js');
       expect(mockLogger.error).toHaveBeenCalledWith(
-        { err: 'Polling error occurred' },
+        { error: 'Polling error occurred' },
         'Telegram bot error',
       );
     });

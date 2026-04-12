@@ -18,6 +18,7 @@ import {
   getHostRuntimeCredentialEnv,
   prepareHostRuntimeContext,
 } from './agent-spawn-host.js';
+import { computeIpcAuthToken } from './ipc-auth.js';
 import { getPromptProfileService } from './prompt-profile.js';
 import { executeRunnerProcess } from './agent-spawn-process.js';
 import {
@@ -36,6 +37,36 @@ export type {
   AgentInput,
   AgentOutput,
 } from './agent-spawn-types.js';
+
+const SAFE_HOST_ENV_KEYS = [
+  'PATH',
+  'TMPDIR',
+  'TMP',
+  'TEMP',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'TERM',
+  'COLORTERM',
+  'NO_COLOR',
+  'FORCE_COLOR',
+  'SSL_CERT_FILE',
+  'NODE_EXTRA_CA_CERTS',
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'NO_PROXY',
+] as const;
+
+function pickSafeHostEnv(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of SAFE_HOST_ENV_KEYS) {
+    const value = source[key];
+    if (typeof value === 'string' && value.length > 0) {
+      env[key] = value;
+    }
+  }
+  return env;
+}
 
 export async function spawnAgent(
   group: RegisteredGroup,
@@ -100,7 +131,7 @@ export async function spawnAgent(
   const command = process.execPath;
   const args = [hostRunnerPath];
   const env: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...pickSafeHostEnv(process.env),
     ...hostCredentials.env,
     TZ: TIMEZONE,
     HOME: NANOCLAW_CONFIG_DIR,
@@ -115,6 +146,7 @@ export async function spawnAgent(
     ),
     NANOCLAW_IPC_DIR: hostRuntime.groupIpcDir,
     NANOCLAW_IPC_INPUT_DIR: path.join(hostRuntime.groupIpcDir, 'input'),
+    NANOCLAW_IPC_AUTH_TOKEN: computeIpcAuthToken(group.folder),
     ...((AGENT_MEMORY_ROOT || '').trim()
       ? { AGENT_MEMORY_ROOT: (AGENT_MEMORY_ROOT || '').trim() }
       : {}),

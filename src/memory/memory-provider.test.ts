@@ -131,9 +131,9 @@ describe('memory provider registry', () => {
     });
     provider.close();
 
-    expect(
-      fs.existsSync(path.join(root, 'procedures', `${proc.id}.md`)),
-    ).toBe(true);
+    expect(fs.existsSync(path.join(root, 'procedures', `${proc.id}.md`))).toBe(
+      true,
+    );
   });
 
   it('qmd provider records events in journal', () => {
@@ -185,7 +185,13 @@ describe('memory provider registry', () => {
     });
 
     expect(provider.getItemById(item.id)).not.toBeNull();
-    expect(provider.findItemByKey({ scope: 'group', groupFolder: 'team', key: 'read-test' })?.id).toBe(item.id);
+    expect(
+      provider.findItemByKey({
+        scope: 'group',
+        groupFolder: 'team',
+        key: 'read-test',
+      })?.id,
+    ).toBe(item.id);
     expect(provider.listTopItems('group', 'team', 5).length).toBeGreaterThan(0);
     expect(provider.listActiveItems('team', 10).length).toBeGreaterThan(0);
 
@@ -216,8 +222,12 @@ describe('memory provider registry', () => {
         embedding: null,
       },
     ]);
-    expect(provider.lexicalSearch('chunk data', 'team', 5).length).toBeGreaterThan(0);
-    expect(provider.listSourceChunks('conversation', 'c1').length).toBeGreaterThan(0);
+    expect(
+      provider.lexicalSearch('chunk data', 'team', 5).length,
+    ).toBeGreaterThan(0);
+    expect(
+      provider.listSourceChunks('conversation', 'c1').length,
+    ).toBeGreaterThan(0);
 
     provider.applyRetentionPolicies('team');
 
@@ -504,7 +514,9 @@ describe('memory provider registry', () => {
     process.env.AGENT_MEMORY_ROOT = root;
 
     const provider = createMemoryProvider('qmd');
-    provider.recordEvent('custom_event', 'generic', null as unknown as string, { info: 'test' });
+    provider.recordEvent('custom_event', 'generic', null as unknown as string, {
+      info: 'test',
+    });
     provider.close();
 
     const journalDir = path.join(root, 'journal');
@@ -595,15 +607,25 @@ describe('memory provider registry', () => {
     const provider = createMemoryProvider('qmd');
 
     // No cached embedding initially
-    const cached = provider.getCachedEmbedding('test-hash-123', 'text-embedding-ada-002');
+    const cached = provider.getCachedEmbedding(
+      'test-hash-123',
+      'text-embedding-ada-002',
+    );
     expect(cached).toBeNull();
 
     // Put a cached embedding
     const embedding = new Array<number>(MEMORY_VECTOR_DIMENSIONS).fill(0.1);
-    provider.putCachedEmbedding('test-hash-123', 'text-embedding-ada-002', embedding);
+    provider.putCachedEmbedding(
+      'test-hash-123',
+      'text-embedding-ada-002',
+      embedding,
+    );
 
     // Now it should be found
-    const found = provider.getCachedEmbedding('test-hash-123', 'text-embedding-ada-002');
+    const found = provider.getCachedEmbedding(
+      'test-hash-123',
+      'text-embedding-ada-002',
+    );
     expect(found).not.toBeNull();
     expect(found!.length).toBe(MEMORY_VECTOR_DIMENSIONS);
 

@@ -67,11 +67,14 @@ export function computeNextJobRun(
     return new Date(Date.now() + 60_000).toISOString();
   }
 
-  const anchor = scheduledFor ? new Date(scheduledFor).getTime() : Date.now();
+  const parsedAnchor = scheduledFor ? Date.parse(scheduledFor) : Date.now();
+  const anchor = Number.isFinite(parsedAnchor) ? parsedAnchor : Date.now();
   const now = Date.now();
-  let next = anchor + ms;
-  while (next <= now) {
-    next += ms;
+  const steps = anchor >= now ? 1 : Math.floor((now - anchor) / ms) + 1;
+  const next = anchor + steps * ms;
+
+  if (!Number.isFinite(next) || Math.abs(next) > 8.64e15) {
+    return new Date(now + 60_000).toISOString();
   }
   return new Date(next).toISOString();
 }
@@ -353,7 +356,10 @@ async function runJob(job: Job, deps: SchedulerDependencies): Promise<void> {
       } catch (err) {
         error = err instanceof Error ? err.message : String(err);
       } finally {
-        if (closeTimer) clearTimeout(closeTimer);
+        if (closeTimer && error) {
+          clearTimeout(closeTimer);
+          closeTimer = null;
+        }
       }
     }
   }
@@ -386,9 +392,15 @@ async function runJob(job: Job, deps: SchedulerDependencies): Promise<void> {
         lease_expires_at: null,
       });
     } else {
-      const delay =
-        currentJob.retry_backoff_ms * Math.max(1, 2 ** (retryCount - 1));
-      nextRun = new Date(Date.now() + delay).toISOString();
+      const baseBackoff = Math.max(0, currentJob.retry_backoff_ms || 0);
+      const exponent = Math.max(0, retryCount - 1);
+      const cappedExponent = Math.min(exponent, 30);
+      const multiplier = Math.max(1, 2 ** cappedExponent);
+      const rawDelay = baseBackoff * multiplier;
+      const boundedDelay = Number.isFinite(rawDelay)
+        ? Math.min(rawDelay, 30 * 24 * 60 * 60 * 1000)
+        : 30 * 24 * 60 * 60 * 1000;
+      nextRun = new Date(Date.now() + boundedDelay).toISOString();
       updateJob(currentJob.id, {
         status: 'active',
         next_run: nextRun,

@@ -13,6 +13,13 @@ interface RemoteControlSession {
   startedAt: string;
 }
 
+interface PersistedRemoteControlSession {
+  pid: number;
+  startedBy: string;
+  startedInChat: string;
+  startedAt: string;
+}
+
 let activeSession: RemoteControlSession | null = null;
 
 const URL_REGEX = /https:\/\/claude\.ai\/code\S+/;
@@ -22,9 +29,20 @@ const STATE_FILE = path.join(DATA_DIR, 'remote-control.json');
 const STDOUT_FILE = path.join(DATA_DIR, 'remote-control.stdout');
 const STDERR_FILE = path.join(DATA_DIR, 'remote-control.stderr');
 
+function shouldAutoAcceptRemoteControl(): boolean {
+  const raw = process.env.REMOTE_CONTROL_AUTO_ACCEPT?.trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes';
+}
+
 function saveState(session: RemoteControlSession): void {
   fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
-  fs.writeFileSync(STATE_FILE, JSON.stringify(session));
+  const persisted: PersistedRemoteControlSession = {
+    pid: session.pid,
+    startedBy: session.startedBy,
+    startedInChat: session.startedInChat,
+    startedAt: session.startedAt,
+  };
+  fs.writeFileSync(STATE_FILE, JSON.stringify(persisted));
 }
 
 function clearState(): void {
@@ -44,6 +62,16 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
+function readRemoteControlUrlFromStdout(): string | null {
+  try {
+    const content = fs.readFileSync(STDOUT_FILE, 'utf-8');
+    const match = content.match(URL_REGEX);
+    return match?.[0] || null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Restore session from disk on startup.
  * If the process is still alive, adopt it. Otherwise, clean up.
@@ -57,16 +85,41 @@ export function restoreRemoteControl(): void {
   }
 
   try {
-    const session: RemoteControlSession = JSON.parse(data);
-    if (session.pid && isProcessAlive(session.pid)) {
-      activeSession = session;
-      logger.info(
-        { pid: session.pid, url: session.url },
-        'Restored Remote Control session from previous run',
-      );
-    } else {
+    const raw = JSON.parse(data) as Partial<
+      PersistedRemoteControlSession & { url: unknown }
+    >;
+    const pid = typeof raw.pid === 'number' ? raw.pid : 0;
+    if (!pid || !isProcessAlive(pid)) {
       clearState();
+      return;
     }
+    const restoredUrl =
+      typeof raw.url === 'string' && raw.url.trim().length > 0
+        ? raw.url.trim()
+        : readRemoteControlUrlFromStdout();
+    if (!restoredUrl) {
+      clearState();
+      logger.warn(
+        { pid },
+        'Remote Control process is alive but URL could not be restored',
+      );
+      return;
+    }
+    activeSession = {
+      pid,
+      url: restoredUrl,
+      startedBy: typeof raw.startedBy === 'string' ? raw.startedBy : 'unknown',
+      startedInChat:
+        typeof raw.startedInChat === 'string' ? raw.startedInChat : 'unknown',
+      startedAt:
+        typeof raw.startedAt === 'string'
+          ? raw.startedAt
+          : new Date().toISOString(),
+    };
+    logger.info(
+      { pid: activeSession.pid },
+      'Restored Remote Control session from previous run',
+    );
   } catch {
     clearState();
   }
@@ -120,10 +173,34 @@ export async function startRemoteControl(
     return { ok: false, error: `Failed to start: ${err.message}` };
   }
 
-  // Auto-accept the "Enable Remote Control?" prompt
-  if (proc.stdin) {
+  const autoAccept = shouldAutoAcceptRemoteControl();
+  if (proc.stdin && autoAccept) {
+    // Optional opt-in for non-interactive environments.
     proc.stdin.write('y\n');
     proc.stdin.end();
+  } else if (proc.stdin) {
+    proc.stdin.end();
+  }
+
+  if (!autoAccept) {
+    fs.closeSync(stdoutFd);
+    fs.closeSync(stderrFd);
+    if (proc.pid) {
+      try {
+        process.kill(-proc.pid, 'SIGTERM');
+      } catch {
+        try {
+          process.kill(proc.pid, 'SIGTERM');
+        } catch {
+          // already dead
+        }
+      }
+    }
+    return {
+      ok: false,
+      error:
+        'Remote Control auto-confirmation is disabled. Set REMOTE_CONTROL_AUTO_ACCEPT=true to enable non-interactive start.',
+    };
   }
 
   // Close FDs in the parent — the child inherited copies
@@ -169,10 +246,7 @@ export async function startRemoteControl(
         activeSession = session;
         saveState(session);
 
-        logger.info(
-          { url: match[0], pid, sender, chatJid },
-          'Remote Control session started',
-        );
+        logger.info({ pid, sender, chatJid }, 'Remote Control session started');
         resolve({ ok: true, url: match[0] });
         return;
       }

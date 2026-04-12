@@ -468,9 +468,7 @@ describe('archiveSessionTranscript', () => {
     writeTranscript({
       groupFolder: 'team-empty',
       sessionId: 'sess-empty',
-      lines: [
-        JSON.stringify({ type: 'system', message: { content: 'boot' } }),
-      ],
+      lines: [JSON.stringify({ type: 'system', message: { content: 'boot' } })],
     });
 
     const { archiveSessionTranscript } = await loadArchiveModule();
@@ -488,9 +486,7 @@ describe('archiveSessionTranscript', () => {
     writeTranscript({
       groupFolder: 'team-ph',
       sessionId: 'sess-ph',
-      lines: [
-        JSON.stringify({ type: 'system', message: { content: 'x' } }),
-      ],
+      lines: [JSON.stringify({ type: 'system', message: { content: 'x' } })],
     });
 
     const { archiveSessionTranscript } = await loadArchiveModule();
@@ -826,7 +822,8 @@ describe('archiveSessionTranscript', () => {
         entries: [
           {
             sessionId: 'sess-slug',
-            summary: '  Fix Bug #42 -- Critical!!! Really Long Name That Exceeds Fifty Characters Limit  ',
+            summary:
+              '  Fix Bug #42 -- Critical!!! Really Long Name That Exceeds Fifty Characters Limit  ',
           },
         ],
       },
@@ -997,13 +994,9 @@ describe('archiveSessionTranscript', () => {
     writeTranscript({
       groupFolder: 'team-phsum',
       sessionId: 'sess-phsum',
-      lines: [
-        JSON.stringify({ type: 'system', message: { content: 'init' } }),
-      ],
+      lines: [JSON.stringify({ type: 'system', message: { content: 'init' } })],
       sessionsIndex: {
-        entries: [
-          { sessionId: 'sess-phsum', summary: 'My Task' },
-        ],
+        entries: [{ sessionId: 'sess-phsum', summary: 'My Task' }],
       },
     });
 

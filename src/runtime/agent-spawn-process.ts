@@ -14,6 +14,29 @@ import {
 } from './agent-spawn-markers.js';
 import { AgentOutput, RunnerProcessSpec } from './agent-spawn-types.js';
 
+const SENSITIVE_TEXT_PATTERNS: RegExp[] = [
+  /\b(ANTHROPIC_API_KEY|OPENAI_API_KEY|CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_AUTH_TOKEN|GITHUB_TOKEN|GH_TOKEN)\s*[:=]\s*([^\s"']+)/gi,
+  /\b(Bearer)\s+[A-Za-z0-9._\-~+/]+=*/gi,
+  /\bsk-[A-Za-z0-9]{16,}\b/g,
+];
+const STREAM_PARSE_BUFFER_LIMIT = Math.max(AGENT_MAX_OUTPUT_SIZE * 4, 131_072);
+
+function sanitizeLogText(value: string, maxChars = 4000): string {
+  let text = value;
+  for (const pattern of SENSITIVE_TEXT_PATTERNS) {
+    text = text.replace(pattern, (match, p1) => {
+      if (typeof p1 === 'string' && p1.length > 0) {
+        return `${p1}=[REDACTED]`;
+      }
+      return '[REDACTED]';
+    });
+  }
+  if (text.length > maxChars) {
+    return `${text.slice(0, maxChars)}...[truncated]`;
+  }
+  return text;
+}
+
 function parseLegacyOutput(stdout: string): AgentOutput {
   const startIdx = stdout.indexOf(OUTPUT_START_MARKER);
   const endIdx = stdout.indexOf(OUTPUT_END_MARKER);
@@ -67,6 +90,7 @@ export function executeRunnerProcess(
     runner.stdin.end();
 
     let parseBuffer = '';
+    let parseBufferTruncated = false;
     let newSessionId: string | undefined;
     let outputChain = Promise.resolve();
     let timedOut = false;
@@ -112,6 +136,22 @@ export function executeRunnerProcess(
 
       if (onOutput) {
         parseBuffer += chunk;
+        if (parseBuffer.length > STREAM_PARSE_BUFFER_LIMIT) {
+          const latestMarker = parseBuffer.lastIndexOf(OUTPUT_START_MARKER);
+          if (latestMarker > 0) {
+            parseBuffer = parseBuffer.slice(latestMarker);
+          }
+          if (parseBuffer.length > STREAM_PARSE_BUFFER_LIMIT) {
+            parseBuffer = parseBuffer.slice(-STREAM_PARSE_BUFFER_LIMIT);
+          }
+          if (!parseBufferTruncated) {
+            parseBufferTruncated = true;
+            logger.warn(
+              { group: group.name, limit: STREAM_PARSE_BUFFER_LIMIT },
+              'Streaming parse buffer exceeded limit and was trimmed',
+            );
+          }
+        }
         let startIdx: number;
         while ((startIdx = parseBuffer.indexOf(OUTPUT_START_MARKER)) !== -1) {
           const endIdx = parseBuffer.indexOf(OUTPUT_END_MARKER, startIdx);
@@ -129,10 +169,23 @@ export function executeRunnerProcess(
             }
             hadStreamingOutput = true;
             resetTimeout();
-            outputChain = outputChain.then(() => onOutput(parsed));
+            outputChain = outputChain
+              .then(() => onOutput(parsed))
+              .catch((err) => {
+                logger.error(
+                  {
+                    group: group.name,
+                    error: err instanceof Error ? err.message : String(err),
+                  },
+                  'onOutput callback failed',
+                );
+              });
           } catch (err) {
             logger.warn(
-              { group: group.name, error: err },
+              {
+                group: group.name,
+                error: err instanceof Error ? err.message : String(err),
+              },
               'Failed to parse streamed output chunk',
             );
           }
@@ -266,13 +319,15 @@ export function executeRunnerProcess(
       logger.debug({ logFile, verbose: isVerbose }, 'Agent log written');
 
       if (code !== 0) {
+        const sanitizedStdout = sanitizeLogText(stdout);
+        const sanitizedStderr = sanitizeLogText(stderr);
         logger.error(
           {
             group: group.name,
             code,
             duration,
-            stderr,
-            stdout,
+            stderr: sanitizedStderr,
+            stdout: sanitizedStdout,
             logFile,
           },
           `${runnerLabel} exited with error`,
@@ -316,12 +371,14 @@ export function executeRunnerProcess(
 
         resolve(output);
       } catch (err) {
+        const sanitizedStdout = sanitizeLogText(stdout);
+        const sanitizedStderr = sanitizeLogText(stderr);
         logger.error(
           {
             group: group.name,
-            stdout,
-            stderr,
-            error: err,
+            stdout: sanitizedStdout,
+            stderr: sanitizedStderr,
+            error: err instanceof Error ? err.message : String(err),
           },
           'Failed to parse runner output',
         );
@@ -337,7 +394,7 @@ export function executeRunnerProcess(
     runner.on('error', (err) => {
       clearTimeout(timeout);
       logger.error(
-        { group: group.name, processName, error: err },
+        { group: group.name, processName, error: err.message },
         `${runnerLabel} spawn error`,
       );
       resolve({

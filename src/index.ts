@@ -248,20 +248,6 @@ async function main(): Promise<void> {
   const channelOpts = {
     onMessage: (chatJid: string, msg: NewMessage) => {
       const trimmed = msg.content.trim();
-      const remoteControlCommand = asRemoteControlCommand(trimmed);
-      if (remoteControlCommand) {
-        handleRemoteControlCommand(
-          remoteControlCommand,
-          chatJid,
-          msg,
-          (jid) => registeredGroups[jid],
-          (jid) => findChannel(channels, jid),
-        ).catch((err) =>
-          logger.error({ err, chatJid }, 'Remote control command error'),
-        );
-        return;
-      }
-
       if (!msg.is_from_me && !msg.is_bot_message && registeredGroups[chatJid]) {
         const cfg = loadSenderAllowlist();
         if (
@@ -276,6 +262,20 @@ async function main(): Promise<void> {
           }
           return;
         }
+      }
+
+      const remoteControlCommand = asRemoteControlCommand(trimmed);
+      if (remoteControlCommand) {
+        handleRemoteControlCommand(
+          remoteControlCommand,
+          chatJid,
+          msg,
+          (jid) => registeredGroups[jid],
+          (jid) => findChannel(channels, jid),
+        ).catch((err) =>
+          logger.error({ err, chatJid }, 'Remote control command error'),
+        );
+        return;
       }
       storeMessage(msg);
     },
