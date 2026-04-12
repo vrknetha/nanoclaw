@@ -300,12 +300,12 @@ describe('parseTextStyles', () => {
     );
   });
 
-  it('converts links for whatsapp but preserves telegram links', () => {
+  it('converts links for whatsapp and telegram', () => {
     expect(parseTextStyles('[Link](https://example.com)', 'whatsapp')).toBe(
       'Link (https://example.com)',
     );
     expect(parseTextStyles('[Link](https://example.com)', 'telegram')).toBe(
-      '[Link](https://example.com)',
+      'Link (https://example.com)',
     );
   });
 

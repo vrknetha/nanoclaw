@@ -257,7 +257,7 @@ function transformSegment(text: string, channel: ChannelType): string {
 
   if (channel === 'slack') {
     t = t.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<$2|$1>');
-  } else if (channel === 'whatsapp') {
+  } else {
     t = t.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 ($2)');
   }
 
