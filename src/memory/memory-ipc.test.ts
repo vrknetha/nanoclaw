@@ -722,6 +722,176 @@ describe('processMemoryRequest additional branches', () => {
   });
 });
 
+describe('processMemoryRequest validation branches', () => {
+  function mockValidatedService(overrides: Record<string, unknown> = {}) {
+    return {
+      getInstance: () => ({
+        getProviderName: () => 'mock-provider',
+        saveMemory: vi.fn().mockResolvedValue({ id: 'mem-1' }),
+        patchMemory: vi.fn().mockReturnValue({ id: 'mem-1' }),
+        saveProcedure: vi.fn().mockReturnValue({ id: 'proc-1' }),
+        patchProcedure: vi.fn().mockReturnValue({ id: 'proc-1' }),
+        ...overrides,
+      }),
+      closeInstance: () => undefined,
+    };
+  }
+
+  it('accepts recent_work as a memory kind', async () => {
+    vi.resetModules();
+    const saveMemory = vi.fn().mockResolvedValue({ id: 'mem-recent' });
+    vi.doMock('./memory-service.js', () => ({
+      MemoryService: mockValidatedService({ saveMemory }),
+    }));
+
+    const { processMemoryRequest } = await import('./memory-ipc.js');
+    const response = await processMemoryRequest(
+      {
+        requestId: 'req-recent-work',
+        action: 'memory_save',
+        payload: {
+          key: 'daily-work',
+          value: 'shipped IPC hardening',
+          kind: 'recent_work',
+        },
+      },
+      'team',
+      false,
+    );
+
+    expect(response.ok).toBe(true);
+    expect(saveMemory).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'recent_work' }),
+      { isMain: false, groupFolder: 'team' },
+    );
+  });
+
+  it('rejects non-object payloads for memory_save', async () => {
+    vi.resetModules();
+    vi.doMock('./memory-service.js', () => ({
+      MemoryService: mockValidatedService(),
+    }));
+
+    const { processMemoryRequest } = await import('./memory-ipc.js');
+    const response = await processMemoryRequest(
+      {
+        requestId: 'req-save-non-object',
+        action: 'memory_save',
+        payload: 'bad-payload' as unknown as Record<string, unknown>,
+      },
+      'team',
+      false,
+    );
+
+    expect(response.ok).toBe(false);
+    expect(response.error).toContain('memory_save payload must be an object');
+  });
+
+  it('rejects non-object payloads and missing required fields for memory_patch', async () => {
+    vi.resetModules();
+    vi.doMock('./memory-service.js', () => ({
+      MemoryService: mockValidatedService(),
+    }));
+    const { processMemoryRequest } = await import('./memory-ipc.js');
+
+    const nonObject = await processMemoryRequest(
+      {
+        requestId: 'req-patch-non-object',
+        action: 'memory_patch',
+        payload: 'bad' as unknown as Record<string, unknown>,
+      },
+      'team',
+      false,
+    );
+    expect(nonObject.ok).toBe(false);
+    expect(nonObject.error).toContain('memory_patch payload must be an object');
+
+    const missingFields = await processMemoryRequest(
+      {
+        requestId: 'req-patch-missing',
+        action: 'memory_patch',
+        payload: { id: '' },
+      },
+      'team',
+      false,
+    );
+    expect(missingFields.ok).toBe(false);
+    expect(missingFields.error).toContain(
+      'memory_patch requires id and expected_version',
+    );
+  });
+
+  it('rejects invalid procedure_save payload shapes', async () => {
+    vi.resetModules();
+    vi.doMock('./memory-service.js', () => ({
+      MemoryService: mockValidatedService(),
+    }));
+    const { processMemoryRequest } = await import('./memory-ipc.js');
+
+    const nonObject = await processMemoryRequest(
+      {
+        requestId: 'req-proc-save-non-object',
+        action: 'procedure_save',
+        payload: 'bad' as unknown as Record<string, unknown>,
+      },
+      'team',
+      false,
+    );
+    expect(nonObject.ok).toBe(false);
+    expect(nonObject.error).toContain('procedure_save payload must be an object');
+
+    const missingRequired = await processMemoryRequest(
+      {
+        requestId: 'req-proc-save-missing',
+        action: 'procedure_save',
+        payload: { title: 'Only title' },
+      },
+      'team',
+      false,
+    );
+    expect(missingRequired.ok).toBe(false);
+    expect(missingRequired.error).toContain(
+      'procedure_save requires title and body',
+    );
+  });
+
+  it('rejects invalid procedure_patch payload shapes', async () => {
+    vi.resetModules();
+    vi.doMock('./memory-service.js', () => ({
+      MemoryService: mockValidatedService(),
+    }));
+    const { processMemoryRequest } = await import('./memory-ipc.js');
+
+    const nonObject = await processMemoryRequest(
+      {
+        requestId: 'req-proc-patch-non-object',
+        action: 'procedure_patch',
+        payload: 'bad' as unknown as Record<string, unknown>,
+      },
+      'team',
+      false,
+    );
+    expect(nonObject.ok).toBe(false);
+    expect(nonObject.error).toContain(
+      'procedure_patch payload must be an object',
+    );
+
+    const missingRequired = await processMemoryRequest(
+      {
+        requestId: 'req-proc-patch-missing',
+        action: 'procedure_patch',
+        payload: { id: 'proc-1' },
+      },
+      'team',
+      false,
+    );
+    expect(missingRequired.ok).toBe(false);
+    expect(missingRequired.error).toContain(
+      'procedure_patch requires id and expected_version',
+    );
+  });
+});
+
 /* ------------------------------------------------------------------ */
 /*  writeMemoryResponse                                                */
 /* ------------------------------------------------------------------ */

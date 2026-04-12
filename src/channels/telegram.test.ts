@@ -1081,6 +1081,145 @@ describe('TelegramChannel', () => {
 
   // --- sendMessage ---
 
+  describe('download + polling edge cases', () => {
+    it('throws when download response has neither reader nor arrayBuffer', async () => {
+      const channel = new TelegramChannel('test-token', createTestOpts());
+
+      await expect(
+        (channel as any).writeFetchResponseToFile(
+          { body: null, headers: { get: () => null } },
+          '/tmp/missing-body.bin',
+        ),
+      ).rejects.toThrow('Telegram download response body is missing');
+    });
+
+    it('returns false when arrayBuffer response exceeds max size', async () => {
+      const channel = new TelegramChannel('test-token', createTestOpts());
+
+      const large = new Uint8Array(51 * 1024 * 1024).buffer;
+      const wrote = await (channel as any).writeFetchResponseToFile(
+        {
+          body: null,
+          headers: { get: () => null },
+          arrayBuffer: vi.fn().mockResolvedValue(large),
+        },
+        '/tmp/too-large.bin',
+      );
+
+      expect(wrote).toBe(false);
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ bytes: 51 * 1024 * 1024 }),
+        'Telegram file exceeds max allowed size',
+      );
+    });
+
+    it('streams chunks to disk when reader is available', async () => {
+      const channel = new TelegramChannel('test-token', createTestOpts());
+      const openSpy = vi.spyOn(fs, 'openSync').mockReturnValue(77 as any);
+      const writeSpy = vi.spyOn(fs, 'writeSync').mockReturnValue(1 as any);
+      const closeSpy = vi.spyOn(fs, 'closeSync').mockReturnValue(undefined);
+      const unlinkSpy = vi.spyOn(fs, 'unlinkSync').mockReturnValue(undefined);
+      const reader = {
+        read: vi
+          .fn()
+          .mockResolvedValueOnce({
+            done: false,
+            value: new Uint8Array([1, 2, 3]),
+          })
+          .mockResolvedValueOnce({
+            done: false,
+            value: new Uint8Array([4]),
+          })
+          .mockResolvedValueOnce({ done: true }),
+      };
+
+      const wrote = await (channel as any).writeFetchResponseToFile(
+        {
+          body: { getReader: () => reader },
+          headers: { get: () => null },
+        },
+        '/tmp/stream-success.bin',
+      );
+
+      expect(wrote).toBe(true);
+      expect(openSpy).toHaveBeenCalled();
+      expect(writeSpy).toHaveBeenCalledTimes(2);
+      expect(closeSpy).toHaveBeenCalledWith(77);
+      expect(unlinkSpy).not.toHaveBeenCalled();
+    });
+
+    it('cleans up partial file when streamed download exceeds max size', async () => {
+      const channel = new TelegramChannel('test-token', createTestOpts());
+      vi.spyOn(fs, 'openSync').mockReturnValue(88 as any);
+      vi.spyOn(fs, 'closeSync').mockReturnValue(undefined);
+      const unlinkSpy = vi.spyOn(fs, 'unlinkSync').mockReturnValue(undefined);
+      const reader = {
+        read: vi.fn().mockResolvedValueOnce({
+          done: false,
+          value: { byteLength: 60 * 1024 * 1024 },
+        }),
+      };
+
+      const wrote = await (channel as any).writeFetchResponseToFile(
+        {
+          body: { getReader: () => reader },
+          headers: { get: () => null },
+        },
+        '/tmp/stream-too-large.bin',
+      );
+
+      expect(wrote).toBe(false);
+      expect(unlinkSpy).toHaveBeenCalledWith('/tmp/stream-too-large.bin');
+    });
+
+    it('rethrows stream read errors and marks partial file for cleanup', async () => {
+      const channel = new TelegramChannel('test-token', createTestOpts());
+      vi.spyOn(fs, 'openSync').mockReturnValue(99 as any);
+      vi.spyOn(fs, 'closeSync').mockReturnValue(undefined);
+      const unlinkSpy = vi.spyOn(fs, 'unlinkSync').mockReturnValue(undefined);
+      const reader = {
+        read: vi.fn().mockRejectedValue(new Error('stream read failed')),
+      };
+
+      await expect(
+        (channel as any).writeFetchResponseToFile(
+          {
+            body: { getReader: () => reader },
+            headers: { get: () => null },
+          },
+          '/tmp/stream-throw.bin',
+        ),
+      ).rejects.toThrow('stream read failed');
+      expect(unlinkSpy).toHaveBeenCalledWith('/tmp/stream-throw.bin');
+    });
+
+    it('retries polling after failure and executes retry callback', async () => {
+      vi.useFakeTimers();
+      try {
+        const opts = createTestOpts();
+        const channel = new TelegramChannel('test-token', opts);
+        await channel.connect();
+
+        currentBot().start = vi.fn().mockRejectedValue(new Error('poll crash'));
+        const startPollingSpy = vi.spyOn(channel as any, 'startPolling');
+
+        (channel as any).startPolling();
+        await vi.runAllTicks();
+        await Promise.resolve();
+        expect(logger.error).toHaveBeenCalledWith(
+          { err: expect.any(Error) },
+          'Telegram polling failed',
+        );
+
+        // Execute the scheduled retry callback to cover timer callback path.
+        vi.runOnlyPendingTimers();
+        expect(startPollingSpy).toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
   describe('sendMessage', () => {
     it('sends message via bot API', async () => {
       const opts = createTestOpts();
