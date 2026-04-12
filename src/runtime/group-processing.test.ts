@@ -1097,7 +1097,9 @@ describe('createGroupProcessor', () => {
         'Working on it...',
       );
       expect(
-        (channel.sendProgressUpdate as ReturnType<typeof vi.fn>).mock.calls.some(
+        (
+          channel.sendProgressUpdate as ReturnType<typeof vi.fn>
+        ).mock.calls.some(
           (call) =>
             call[0] === 'group1@g.us' &&
             typeof call[1] === 'string' &&
@@ -1105,7 +1107,9 @@ describe('createGroupProcessor', () => {
         ),
       ).toBe(true);
       expect(
-        (channel.sendProgressUpdate as ReturnType<typeof vi.fn>).mock.calls.some(
+        (
+          channel.sendProgressUpdate as ReturnType<typeof vi.fn>
+        ).mock.calls.some(
           (call) =>
             call[0] === 'group1@g.us' &&
             typeof call[1] === 'string' &&
@@ -1142,7 +1146,9 @@ describe('createGroupProcessor', () => {
 
       expect(ok).toBe(true);
       expect(
-        (channel.sendProgressUpdate as ReturnType<typeof vi.fn>).mock.calls.some(
+        (
+          channel.sendProgressUpdate as ReturnType<typeof vi.fn>
+        ).mock.calls.some(
           (call) =>
             call[0] === 'group1@g.us' &&
             typeof call[1] === 'string' &&

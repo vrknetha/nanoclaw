@@ -505,7 +505,9 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
             ? `Failed after ${elapsed}.`
             : `Done in ${elapsed}.`;
         try {
-          await channel.sendProgressUpdate(chatJid, finalStatus, { done: true });
+          await channel.sendProgressUpdate(chatJid, finalStatus, {
+            done: true,
+          });
         } catch (err) {
           logger.debug(
             { err, group: group.name },

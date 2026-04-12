@@ -1162,7 +1162,9 @@ export class TelegramChannel implements Channel {
       if (!options.done) {
         this.activeProgressMessages.set(key, {
           chatId: numericId,
-          threadId: Number.isFinite(parsedThreadId) ? parsedThreadId : undefined,
+          threadId: Number.isFinite(parsedThreadId)
+            ? parsedThreadId
+            : undefined,
           messageId,
           lastText: nextText,
         });
