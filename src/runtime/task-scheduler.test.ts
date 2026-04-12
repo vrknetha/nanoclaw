@@ -11,7 +11,7 @@ import {
   computeNextJobRun,
   startSchedulerLoop,
 } from './task-scheduler.js';
-import { runContainerAgent } from './container-runner.js';
+import { spawnAgent } from './agent-spawn.js';
 
 const reflectAfterTurnMock = vi.fn(async () => {});
 const runDreamingSweepMock = vi.fn(async () => ({
@@ -26,8 +26,8 @@ const runDreamingSweepMock = vi.fn(async () => ({
   durationMs: 1,
 }));
 
-vi.mock('./container-runner.js', () => ({
-  runContainerAgent: vi.fn(async () => ({
+vi.mock('./agent-spawn.js', () => ({
+  spawnAgent: vi.fn(async () => ({
     status: 'success',
     result: 'Job run completed',
     newSessionId: 'session-1',
@@ -140,7 +140,7 @@ describe('job scheduler', () => {
   });
 
   it('sends failed/dead-letter status updates to linked sessions', async () => {
-    vi.mocked(runContainerAgent).mockResolvedValueOnce({
+    vi.mocked(spawnAgent).mockResolvedValueOnce({
       status: 'error',
       error: 'synthetic failure',
       result: null,
@@ -243,7 +243,7 @@ describe('job scheduler', () => {
     await Promise.resolve();
 
     expect(runDreamingSweepMock).toHaveBeenCalledTimes(1);
-    expect(runContainerAgent).not.toHaveBeenCalled();
+    expect(spawnAgent).not.toHaveBeenCalled();
     expect(reflectAfterTurnMock).not.toHaveBeenCalled();
   });
 });

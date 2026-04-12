@@ -525,7 +525,7 @@ export const MEMORY_CONSOLIDATION_MODEL =
 
 export type DefaultModelSource = 'ANTHROPIC_MODEL' | 'CLAUDE_MODEL' | 'unset';
 export type EffectiveModelSource =
-  | 'group.containerConfig.model'
+  | 'group.agentConfig.model'
   | DefaultModelSource;
 
 export function getDefaultModelConfig(): {
@@ -549,7 +549,7 @@ export function getEffectiveModelConfig(groupModel?: string): {
   if (normalizedGroupModel) {
     return {
       model: normalizedGroupModel,
-      source: 'group.containerConfig.model',
+      source: 'group.agentConfig.model',
     };
   }
   return getDefaultModelConfig();

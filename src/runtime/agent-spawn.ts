@@ -17,36 +17,36 @@ import { resolveGroupFolderPath } from '../platform/group-folder.js';
 import {
   getHostRuntimeCredentialEnv,
   prepareHostRuntimeContext,
-} from './container-runner-host.js';
+} from './agent-spawn-host.js';
 import { getPromptProfileService } from './prompt-profile.js';
-import { executeRunnerProcess } from './container-runner-process.js';
+import { executeRunnerProcess } from './agent-spawn-process.js';
 import {
-  ContainerInput,
-  ContainerOutput,
-  RunContainerAgentOptions,
-} from './container-runner-types.js';
+  AgentInput,
+  AgentOutput,
+  RunAgentOptions,
+} from './agent-spawn-types.js';
 
 export {
   writeJobRunsSnapshot,
   writeJobsSnapshot,
   writeGroupsSnapshot,
-} from './container-runner-snapshots.js';
+} from './agent-spawn-snapshots.js';
 export type {
   AvailableGroup,
-  ContainerInput,
-  ContainerOutput,
-} from './container-runner-types.js';
+  AgentInput,
+  AgentOutput,
+} from './agent-spawn-types.js';
 
-export async function runContainerAgent(
+export async function spawnAgent(
   group: RegisteredGroup,
-  input: ContainerInput,
+  input: AgentInput,
   onProcess: (
     proc: import('child_process').ChildProcess,
     containerName: string,
   ) => void,
-  onOutput?: (output: ContainerOutput) => Promise<void>,
-  options?: RunContainerAgentOptions,
-): Promise<ContainerOutput> {
+  onOutput?: (output: AgentOutput) => Promise<void>,
+  options?: RunAgentOptions,
+): Promise<AgentOutput> {
   const startTime = Date.now();
 
   const groupDir = resolveGroupFolderPath(group.folder);
@@ -54,7 +54,7 @@ export async function runContainerAgent(
 
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const processName = `nanoclaw-${safeName}-${Date.now()}`;
-  const modelConfig = getEffectiveModelConfig(group.containerConfig?.model);
+  const modelConfig = getEffectiveModelConfig(group.agentConfig?.model);
   const promptProfileService = getPromptProfileService();
   const agentIdentifier = input.isMain
     ? undefined
@@ -73,7 +73,7 @@ export async function runContainerAgent(
     );
   }
 
-  const runnerInput: ContainerInput = {
+  const runnerInput: AgentInput = {
     ...input,
     compiledSystemPrompt,
   };
@@ -104,6 +104,7 @@ export async function runContainerAgent(
     ...hostCredentials.env,
     TZ: TIMEZONE,
     HOME: NANOCLAW_CONFIG_DIR,
+    GH_CONFIG_DIR: path.join(NANOCLAW_CONFIG_DIR, '..', 'gh'),
     NANOCLAW_WORKSPACE_GROUP_DIR: hostRuntime.groupDir,
     NANOCLAW_WORKSPACE_GLOBAL_DIR: hostRuntime.globalDir || '',
     NANOCLAW_WORKSPACE_EXTRA_DIR: path.join(

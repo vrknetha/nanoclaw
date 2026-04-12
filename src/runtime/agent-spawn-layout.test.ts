@@ -46,7 +46,7 @@ describe('ensureSharedSessionSettings', () => {
     }));
 
     const { ensureSharedSessionSettings } =
-      await import('./container-runner-layout.js');
+      await import('./agent-spawn-layout.js');
     ensureSharedSessionSettings();
 
     const updated = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as {

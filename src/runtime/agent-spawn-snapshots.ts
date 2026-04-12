@@ -6,7 +6,7 @@ import {
   AvailableGroup,
   JobRunSnapshotRow,
   JobSnapshotRow,
-} from './container-runner-types.js';
+} from './agent-spawn-types.js';
 
 export function writeJobsSnapshot(
   groupFolder: string,

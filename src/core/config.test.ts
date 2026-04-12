@@ -68,7 +68,7 @@ describe('model config precedence', () => {
     });
     expect(cfg.getEffectiveModelConfig('opus')).toEqual({
       model: 'opus',
-      source: 'group.containerConfig.model',
+      source: 'group.agentConfig.model',
     });
   });
 });

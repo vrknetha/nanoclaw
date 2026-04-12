@@ -11,13 +11,13 @@ import { logger } from '../core/logger.js';
 import {
   OUTPUT_END_MARKER,
   OUTPUT_START_MARKER,
-} from './container-runner-markers.js';
+} from './agent-spawn-markers.js';
 import {
-  ContainerOutput,
+  AgentOutput,
   RunnerProcessSpec,
-} from './container-runner-types.js';
+} from './agent-spawn-types.js';
 
-function parseLegacyOutput(stdout: string): ContainerOutput {
+function parseLegacyOutput(stdout: string): AgentOutput {
   const startIdx = stdout.indexOf(OUTPUT_START_MARKER);
   const endIdx = stdout.indexOf(OUTPUT_END_MARKER);
 
@@ -31,12 +31,12 @@ function parseLegacyOutput(stdout: string): ContainerOutput {
     jsonLine = lines[lines.length - 1];
   }
 
-  return JSON.parse(jsonLine) as ContainerOutput;
+  return JSON.parse(jsonLine) as AgentOutput;
 }
 
 export function executeRunnerProcess(
   spec: RunnerProcessSpec,
-): Promise<ContainerOutput> {
+): Promise<AgentOutput> {
   const {
     group,
     input,
@@ -75,7 +75,7 @@ export function executeRunnerProcess(
     let timedOut = false;
     let hadStreamingOutput = false;
     const configuredTimeout =
-      options?.timeoutMs ?? group.containerConfig?.timeout ?? AGENT_TIMEOUT;
+      options?.timeoutMs ?? group.agentConfig?.timeout ?? AGENT_TIMEOUT;
     const timeoutMs =
       options?.timeoutMs != null
         ? configuredTimeout
@@ -126,7 +126,7 @@ export function executeRunnerProcess(
           parseBuffer = parseBuffer.slice(endIdx + OUTPUT_END_MARKER.length);
 
           try {
-            const parsed: ContainerOutput = JSON.parse(jsonStr);
+            const parsed: AgentOutput = JSON.parse(jsonStr);
             if (parsed.newSessionId) {
               newSessionId = parsed.newSessionId;
             }

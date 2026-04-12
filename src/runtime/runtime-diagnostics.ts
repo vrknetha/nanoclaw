@@ -30,7 +30,6 @@ export interface RuntimeDiagnosticsOptions {
   autoBuildHostRunner?: boolean;
 }
 
-
 function summarizeExecError(err: unknown): string {
   if (!(err instanceof Error)) return String(err);
   return err.message.replace(/\s+/g, ' ').trim();
@@ -220,9 +219,7 @@ export function formatRuntimeDiagnosticsMessage(
   return lines.join('\n');
 }
 
-function formatRuntimeFailureMessage(
-  diagnostics: RuntimeDiagnostics,
-): string {
+function formatRuntimeFailureMessage(diagnostics: RuntimeDiagnostics): string {
   return [
     'Runtime preflight failed.',
     formatRuntimeDiagnosticsMessage(diagnostics),

@@ -16,7 +16,7 @@ import { writeMemoryContextSnapshot } from '../memory/memory-ipc.js';
 import { MemoryService } from '../memory/memory-service.js';
 import { resolveGroupFolderPath } from '../platform/group-folder.js';
 import { GroupQueue } from './group-queue.js';
-import { ContainerOutput, runContainerAgent } from './container-runner.js';
+import { AgentOutput, spawnAgent } from './agent-spawn.js';
 import {
   addJobEvent,
   completeJobRun,
@@ -310,7 +310,7 @@ async function runJob(job: Job, deps: SchedulerDependencies): Promise<void> {
 
     if (!error) {
       try {
-        const output = await runContainerAgent(
+        const output = await spawnAgent(
           execution.group,
           {
             prompt: currentJob.prompt,
@@ -329,7 +329,7 @@ async function runJob(job: Job, deps: SchedulerDependencies): Promise<void> {
               containerName,
               execution.group.folder,
             ),
-          async (streamedOutput: ContainerOutput) => {
+          async (streamedOutput: AgentOutput) => {
             if (streamedOutput.result) {
               result = streamedOutput.result;
               scheduleClose();

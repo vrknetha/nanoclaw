@@ -20,8 +20,8 @@ import {
   ensureGroupIpcLayout,
   ensureSharedSessionSettings,
   syncGroupSkills,
-} from './container-runner-layout.js';
-import { HostRuntimeContext } from './container-runner-types.js';
+} from './agent-spawn-layout.js';
+import { HostRuntimeContext } from './agent-spawn-types.js';
 
 const onecli = new OneCLI({ url: ONECLI_URL });
 

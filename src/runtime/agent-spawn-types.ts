@@ -2,7 +2,7 @@ import { ChildProcess } from 'child_process';
 
 import { RegisteredGroup, ThinkingOverride } from '../core/types.js';
 
-export interface ContainerInput {
+export interface AgentInput {
   prompt: string;
   sessionId?: string;
   groupFolder: string;
@@ -15,14 +15,14 @@ export interface ContainerInput {
   thinking?: ThinkingOverride;
 }
 
-export interface ContainerOutput {
+export interface AgentOutput {
   status: 'success' | 'error';
   result: string | null;
   newSessionId?: string;
   error?: string;
 }
 
-export interface RunContainerAgentOptions {
+export interface RunAgentOptions {
   timeoutMs?: number;
 }
 
@@ -76,13 +76,13 @@ export interface JobRunSnapshotRow {
 
 export interface RunnerProcessSpec {
   group: RegisteredGroup;
-  input: ContainerInput;
+  input: AgentInput;
   command: string;
   args: string[];
   env: NodeJS.ProcessEnv | undefined;
   onProcess: (proc: ChildProcess, containerName: string) => void;
-  onOutput?: (output: ContainerOutput) => Promise<void>;
-  options?: RunContainerAgentOptions;
+  onOutput?: (output: AgentOutput) => Promise<void>;
+  options?: RunAgentOptions;
   runnerLabel: string;
   processName: string;
   startTime: number;

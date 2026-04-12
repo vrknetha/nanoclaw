@@ -37,7 +37,7 @@ export interface AllowedRoot {
   description?: string;
 }
 
-export interface ContainerConfig {
+export interface AgentConfig {
   additionalMounts?: AdditionalMount[];
   model?: string; // Optional model alias/full name for this group
   thinking?: ThinkingOverride; // Optional thinking override for this group
@@ -49,7 +49,7 @@ export interface RegisteredGroup {
   folder: string;
   trigger: string;
   added_at: string;
-  containerConfig?: ContainerConfig;
+  agentConfig?: AgentConfig;
   requiresTrigger?: boolean; // Default: true for groups, false for solo chats
   isMain?: boolean; // True for the main control group (no trigger, elevated privileges)
 }

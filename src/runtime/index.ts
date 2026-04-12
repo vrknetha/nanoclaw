@@ -1,4 +1,4 @@
-export * from './container-runner.js';
+export * from './agent-spawn.js';
 export * from './group-queue.js';
 export * from './group-processing.js';
 export * from './group-registry.js';

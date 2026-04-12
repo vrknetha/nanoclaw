@@ -15,7 +15,7 @@ import {
   writeJobRunsSnapshot,
   writeJobsSnapshot,
   writeGroupsSnapshot,
-} from './runtime/container-runner.js';
+} from './runtime/agent-spawn.js';
 import {
   getAllJobs,
   getAllChats,
@@ -172,7 +172,7 @@ function setGroupThinkingOverride(
   );
 }
 
-export function getAvailableGroups(): import('./runtime/container-runner.js').AvailableGroup[] {
+export function getAvailableGroups(): import('./runtime/agent-spawn.js').AvailableGroup[] {
   return listAvailableGroups(getAllChats(), registeredGroups);
 }
 

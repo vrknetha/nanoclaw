@@ -25,12 +25,12 @@ import {
 } from '../storage/db.js';
 import {
   AvailableGroup,
-  ContainerOutput,
-  runContainerAgent,
+  AgentOutput,
+  spawnAgent,
   writeJobRunsSnapshot,
   writeJobsSnapshot,
   writeGroupsSnapshot,
-} from './container-runner.js';
+} from './agent-spawn.js';
 import { archiveSessionTranscript } from '../session/session-transcript-archive.js';
 import { handleSessionCommand } from '../session/session-commands.js';
 import {
@@ -73,7 +73,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
     group: RegisteredGroup,
     prompt: string,
     chatJid: string,
-    onOutput?: (output: ContainerOutput) => Promise<void>,
+    onOutput?: (output: AgentOutput) => Promise<void>,
     options?: { timeoutMs?: number },
     userId?: string,
     onMemoryContext?: (retrievedItemIds: string[]) => void,
@@ -129,7 +129,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
     );
 
     const wrappedOnOutput = onOutput
-      ? async (output: ContainerOutput) => {
+      ? async (output: AgentOutput) => {
           if (output.newSessionId) {
             deps.setSession(group.folder, output.newSessionId);
           }
@@ -138,7 +138,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
       : undefined;
 
     try {
-      const output = await runContainerAgent(
+      const output = await spawnAgent(
         group,
         {
           prompt,
@@ -147,7 +147,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
           chatJid,
           isMain,
           assistantName: ASSISTANT_NAME,
-          thinking: group.containerConfig?.thinking,
+          thinking: group.agentConfig?.thinking,
         },
         (proc, containerName) =>
           deps.queue.registerProcess(
@@ -247,10 +247,10 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
         },
         formatMessages,
         getDefaultModel: () => getDefaultModelConfig().model,
-        getGroupModelOverride: () => group.containerConfig?.model,
+        getGroupModelOverride: () => group.agentConfig?.model,
         setGroupModelOverride: (value) =>
           deps.setGroupModelOverride(chatJid, value),
-        getGroupThinkingOverride: () => group.containerConfig?.thinking,
+        getGroupThinkingOverride: () => group.agentConfig?.thinking,
         setGroupThinkingOverride: (value) =>
           deps.setGroupThinkingOverride(chatJid, value),
         getRuntimeStatusMessage: async () => {

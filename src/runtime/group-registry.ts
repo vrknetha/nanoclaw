@@ -8,7 +8,7 @@ import {
 import { logger } from '../core/logger.js';
 import { RegisteredGroup, ThinkingOverride } from '../core/types.js';
 import { resolveGroupFolderPath } from '../platform/group-folder.js';
-import { AvailableGroup } from './container-runner.js';
+import { AvailableGroup } from './agent-spawn.js';
 
 interface ChatRow {
   jid: string;
@@ -84,21 +84,21 @@ export function setGroupModelOverride(
   const existingGroup = registeredGroups[chatJid];
   if (!existingGroup) return;
 
-  const prevModel = existingGroup.containerConfig?.model;
+  const prevModel = existingGroup.agentConfig?.model;
   if (prevModel === model) return;
 
-  const nextContainerConfig = { ...(existingGroup.containerConfig || {}) };
+  const nextAgentConfig = { ...(existingGroup.agentConfig || {}) };
   if (model) {
-    nextContainerConfig.model = model;
+    nextAgentConfig.model = model;
   } else {
-    delete nextContainerConfig.model;
+    delete nextAgentConfig.model;
   }
 
   const updatedGroup: RegisteredGroup = {
     ...existingGroup,
-    containerConfig:
-      Object.keys(nextContainerConfig).length > 0
-        ? nextContainerConfig
+    agentConfig:
+      Object.keys(nextAgentConfig).length > 0
+        ? nextAgentConfig
         : undefined,
   };
 
@@ -122,22 +122,22 @@ export function setGroupThinkingOverride(
   const existingGroup = registeredGroups[chatJid];
   if (!existingGroup) return;
 
-  const prevThinking = existingGroup.containerConfig?.thinking;
+  const prevThinking = existingGroup.agentConfig?.thinking;
   if (JSON.stringify(prevThinking || null) === JSON.stringify(thinking || null))
     return;
 
-  const nextContainerConfig = { ...(existingGroup.containerConfig || {}) };
+  const nextAgentConfig = { ...(existingGroup.agentConfig || {}) };
   if (thinking) {
-    nextContainerConfig.thinking = thinking;
+    nextAgentConfig.thinking = thinking;
   } else {
-    delete nextContainerConfig.thinking;
+    delete nextAgentConfig.thinking;
   }
 
   const updatedGroup: RegisteredGroup = {
     ...existingGroup,
-    containerConfig:
-      Object.keys(nextContainerConfig).length > 0
-        ? nextContainerConfig
+    agentConfig:
+      Object.keys(nextAgentConfig).length > 0
+        ? nextAgentConfig
         : undefined,
   };
 

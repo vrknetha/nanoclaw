@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 import { PassThrough } from 'stream';
 
-// Sentinel markers must match container-runner-markers.ts
+// Sentinel markers must match agent-spawn-markers.ts
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
 
@@ -19,7 +19,7 @@ vi.mock('../core/config.js', () => ({
   TIMEZONE: 'America/Los_Angeles',
   getEffectiveModelConfig: vi.fn((groupModel?: string) =>
     groupModel
-      ? { model: groupModel, source: 'group.containerConfig.model' }
+      ? { model: groupModel, source: 'group.agentConfig.model' }
       : { source: 'unset' },
   ),
 }));
@@ -52,8 +52,8 @@ vi.mock('fs', async () => {
   };
 });
 
-// Mock container-runner-host to avoid real filesystem operations
-vi.mock('./container-runner-host.js', () => ({
+// Mock agent-spawn-host to avoid real filesystem operations
+vi.mock('./agent-spawn-host.js', () => ({
   getHostRuntimeCredentialEnv: vi.fn().mockResolvedValue({
     env: {},
     onecliApplied: false,
@@ -107,7 +107,7 @@ vi.mock('child_process', async () => {
   };
 });
 
-import { runContainerAgent, ContainerOutput } from './container-runner.js';
+import { spawnAgent, AgentOutput } from './agent-spawn.js';
 import { getEffectiveModelConfig } from '../core/config.js';
 import { spawn } from 'child_process';
 import type { RegisteredGroup } from '../core/types.js';
@@ -128,13 +128,13 @@ const testInput = {
 
 function emitOutputMarker(
   proc: ReturnType<typeof createFakeProcess>,
-  output: ContainerOutput,
+  output: AgentOutput,
 ) {
   const json = JSON.stringify(output);
   proc.stdout.push(`${OUTPUT_START_MARKER}\n${json}\n${OUTPUT_END_MARKER}\n`);
 }
 
-describe('container-runner timeout behavior', () => {
+describe('agent-spawn timeout behavior', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     fakeProc = createFakeProcess();
@@ -148,7 +148,7 @@ describe('container-runner timeout behavior', () => {
 
   it('timeout after output resolves as success', async () => {
     const onOutput = vi.fn(async () => {});
-    const resultPromise = runContainerAgent(
+    const resultPromise = spawnAgent(
       testGroup,
       testInput,
       () => {},
@@ -184,7 +184,7 @@ describe('container-runner timeout behavior', () => {
 
   it('timeout with no output resolves as error', async () => {
     const onOutput = vi.fn(async () => {});
-    const resultPromise = runContainerAgent(
+    const resultPromise = spawnAgent(
       testGroup,
       testInput,
       () => {},
@@ -207,7 +207,7 @@ describe('container-runner timeout behavior', () => {
 
   it('normal exit after output resolves as success', async () => {
     const onOutput = vi.fn(async () => {});
-    const resultPromise = runContainerAgent(
+    const resultPromise = spawnAgent(
       testGroup,
       testInput,
       () => {},
@@ -236,13 +236,13 @@ describe('container-runner timeout behavior', () => {
   it('passes effective model to process env when configured', async () => {
     vi.mocked(getEffectiveModelConfig).mockReturnValue({
       model: 'opus',
-      source: 'group.containerConfig.model' as const,
+      source: 'group.agentConfig.model' as const,
     });
     const groupWithModel: RegisteredGroup = {
       ...testGroup,
-      containerConfig: { model: 'opus' },
+      agentConfig: { model: 'opus' },
     };
-    const resultPromise = runContainerAgent(
+    const resultPromise = spawnAgent(
       groupWithModel,
       testInput,
       () => {},
@@ -266,7 +266,7 @@ describe('container-runner timeout behavior', () => {
   });
 
   it('forwards AGENT_MEMORY_ROOT via env when configured', async () => {
-    const resultPromise = runContainerAgent(testGroup, testInput, () => {});
+    const resultPromise = spawnAgent(testGroup, testInput, () => {});
     await vi.advanceTimersByTimeAsync(10);
     fakeProc.emit('close', 0);
     await vi.advanceTimersByTimeAsync(10);

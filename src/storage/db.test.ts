@@ -706,29 +706,29 @@ describe('registered group isMain', () => {
   });
 });
 
-describe('registered group containerConfig model', () => {
-  it('persists containerConfig.model through set/get round-trip', () => {
+describe('registered group agentConfig model', () => {
+  it('persists agentConfig.model through set/get round-trip', () => {
     setRegisteredGroup('group@g.us', {
       name: 'Dev Chat',
       folder: 'whatsapp_dev-chat',
       trigger: '@Andy',
       added_at: '2024-01-01T00:00:00.000Z',
-      containerConfig: {
+      agentConfig: {
         model: 'opus',
       },
     });
 
     const group = getRegisteredGroup('group@g.us');
-    expect(group?.containerConfig?.model).toBe('opus');
+    expect(group?.agentConfig?.model).toBe('opus');
   });
 
-  it('preserves unrelated containerConfig fields with model', () => {
+  it('preserves unrelated agentConfig fields with model', () => {
     setRegisteredGroup('group@g.us', {
       name: 'Dev Chat',
       folder: 'whatsapp_dev-chat',
       trigger: '@Andy',
       added_at: '2024-01-01T00:00:00.000Z',
-      containerConfig: {
+      agentConfig: {
         model: 'sonnet',
         timeout: 600000,
         additionalMounts: [
@@ -742,7 +742,7 @@ describe('registered group containerConfig model', () => {
     });
 
     const group = getRegisteredGroup('group@g.us');
-    expect(group?.containerConfig).toEqual({
+    expect(group?.agentConfig).toEqual({
       model: 'sonnet',
       timeout: 600000,
       additionalMounts: [
