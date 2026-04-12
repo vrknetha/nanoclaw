@@ -4,7 +4,12 @@ import path from 'path';
 
 import { Api, Bot } from 'grammy';
 
-import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../core/config.js';
+import {
+  ASSISTANT_NAME,
+  PERMISSION_APPROVAL_TIMEOUT_MS,
+  TELEGRAM_PERMISSION_APPROVER_IDS,
+  TRIGGER_PATTERN,
+} from '../core/config.js';
 import { readEnvFile } from '../core/env.js';
 import { resolveGroupFolderPath } from '../platform/group-folder.js';
 import { logger } from '../core/logger.js';
@@ -13,10 +18,14 @@ import {
   Channel,
   OnChatMetadata,
   OnInboundMessage,
+  PermissionApprovalDecision,
+  PermissionApprovalRequest,
   RegisteredGroup,
 } from '../core/types.js';
 
 const TELEGRAM_MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024;
+const TELEGRAM_PERMISSION_CALLBACK_PATTERN =
+  /^perm:(approve|deny):([a-zA-Z0-9][a-zA-Z0-9._-]{0,127})$/;
 
 export interface TelegramChannelOpts {
   onMessage: OnInboundMessage;
@@ -55,6 +64,15 @@ export class TelegramChannel implements Channel {
   private pollingRetryTimer: ReturnType<typeof setTimeout> | null = null;
   private opts: TelegramChannelOpts;
   private botToken: string;
+  private pendingPermissionPrompts = new Map<
+    string,
+    {
+      chatId: string;
+      messageId: number;
+      timer: ReturnType<typeof setTimeout>;
+      resolve: (decision: PermissionApprovalDecision) => void;
+    }
+  >();
 
   constructor(botToken: string, opts: TelegramChannelOpts) {
     this.botToken = botToken;
@@ -189,6 +207,79 @@ export class TelegramChannel implements Channel {
     }, retryDelayMs);
   }
 
+  private formatPermissionPromptText(
+    request: PermissionApprovalRequest,
+    timeoutMs: number,
+  ): string {
+    const timeoutMinutes = Math.max(1, Math.round(timeoutMs / 60000));
+    const lines = [
+      `Permission request: ${request.requestId}`,
+      `Tool: ${request.displayName || request.toolName}`,
+      `Source: ${request.sourceGroup}`,
+    ];
+    if (request.title) lines.push(`Action: ${request.title}`);
+    if (request.blockedPath) lines.push(`Path: ${request.blockedPath}`);
+    if (request.decisionReason) lines.push(`Reason: ${request.decisionReason}`);
+    if (request.description) lines.push(`Details: ${request.description}`);
+    lines.push(`Reply timeout: ${timeoutMinutes} minute(s)`);
+    return lines.join('\n');
+  }
+
+  private async isTelegramApproverAuthorized(
+    chatId: string,
+    userId: string,
+  ): Promise<boolean> {
+    if (TELEGRAM_PERMISSION_APPROVER_IDS.has(userId)) return true;
+    if (!this.bot) return false;
+    const userNumericId = parseInt(userId, 10);
+    if (!Number.isFinite(userNumericId)) return false;
+    try {
+      const member = await this.bot.api.getChatMember(chatId, userNumericId);
+      const status =
+        typeof member === 'object' && member !== null && 'status' in member
+          ? String((member as { status?: unknown }).status)
+          : '';
+      return status === 'creator' || status === 'administrator';
+    } catch (err) {
+      logger.warn(
+        { chatId, userId, err: this.sanitizeErrorMessage(err) },
+        'Failed to verify Telegram approver role',
+      );
+      return false;
+    }
+  }
+
+  private async resolvePermissionPrompt(
+    requestId: string,
+    decision: PermissionApprovalDecision,
+  ): Promise<void> {
+    const pending = this.pendingPermissionPrompts.get(requestId);
+    if (!pending || !this.bot) return;
+    this.pendingPermissionPrompts.delete(requestId);
+    clearTimeout(pending.timer);
+    pending.resolve(decision);
+
+    const status = decision.approved ? 'APPROVED' : 'DENIED';
+    const actor = decision.decidedBy || 'unknown';
+    const reasonSuffix = decision.reason ? ` (${decision.reason})` : '';
+    const text = `Permission request ${requestId}\nStatus: ${status} by ${actor}${reasonSuffix}`;
+    try {
+      await this.bot.api.editMessageText(
+        pending.chatId,
+        pending.messageId,
+        text,
+        {
+          reply_markup: { inline_keyboard: [] },
+        },
+      );
+    } catch (err) {
+      logger.debug(
+        { requestId, err: this.sanitizeErrorMessage(err) },
+        'Failed to update Telegram permission prompt message',
+      );
+    }
+  }
+
   private startPolling(): void {
     if (!this.bot || this.isStopping) return;
 
@@ -311,6 +402,68 @@ export class TelegramChannel implements Channel {
     // Command to check bot status
     this.bot.command('ping', (ctx) => {
       ctx.reply(`${ASSISTANT_NAME} is online.`);
+    });
+
+    this.bot.on('callback_query:data', async (ctx: any) => {
+      const data =
+        typeof ctx.callbackQuery?.data === 'string'
+          ? ctx.callbackQuery.data
+          : '';
+      const match = TELEGRAM_PERMISSION_CALLBACK_PATTERN.exec(data);
+      if (!match) return;
+      const action = match[1] as 'approve' | 'deny';
+      const requestId = match[2];
+      const pending = this.pendingPermissionPrompts.get(requestId);
+      if (!pending) {
+        await ctx.answerCallbackQuery({
+          text: 'Permission request is no longer active.',
+          show_alert: true,
+        });
+        return;
+      }
+
+      const callbackChatId = ctx.chat?.id?.toString() || '';
+      if (!callbackChatId || callbackChatId !== pending.chatId) {
+        await ctx.answerCallbackQuery({
+          text: 'This approval request belongs to a different chat.',
+          show_alert: true,
+        });
+        return;
+      }
+
+      const userId = ctx.from?.id?.toString() || '';
+      if (!userId) {
+        await ctx.answerCallbackQuery({
+          text: 'Unable to verify approver identity.',
+          show_alert: true,
+        });
+        return;
+      }
+      const authorized = await this.isTelegramApproverAuthorized(
+        pending.chatId,
+        userId,
+      );
+      if (!authorized) {
+        await ctx.answerCallbackQuery({
+          text: 'Only approved admins can make this decision.',
+          show_alert: true,
+        });
+        return;
+      }
+
+      const decidedBy =
+        ctx.from?.first_name || ctx.from?.username || userId || 'unknown';
+      await this.resolvePermissionPrompt(requestId, {
+        approved: action === 'approve',
+        decidedBy,
+        reason:
+          action === 'approve'
+            ? 'approved via Telegram'
+            : 'denied via Telegram',
+      });
+      await ctx.answerCallbackQuery({
+        text: action === 'approve' ? 'Approved.' : 'Denied.',
+      });
     });
 
     // Telegram bot commands handled above — skip them in the general handler
@@ -570,6 +723,71 @@ export class TelegramChannel implements Channel {
     }
   }
 
+  async requestPermissionApproval(
+    jid: string,
+    request: PermissionApprovalRequest,
+  ): Promise<PermissionApprovalDecision> {
+    if (!this.bot) {
+      return { approved: false, reason: 'Telegram bot is not connected' };
+    }
+    const chatId = jid.replace(/^tg:/, '');
+    if (!chatId) {
+      return { approved: false, reason: 'Invalid Telegram chat ID' };
+    }
+    if (this.pendingPermissionPrompts.has(request.requestId)) {
+      return {
+        approved: false,
+        reason: `Duplicate pending request: ${request.requestId}`,
+      };
+    }
+
+    const timeoutMs = PERMISSION_APPROVAL_TIMEOUT_MS;
+    const promptText = this.formatPermissionPromptText(request, timeoutMs);
+    try {
+      const sent = await this.bot.api.sendMessage(chatId, promptText, {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              {
+                text: 'Approve',
+                callback_data: `perm:approve:${request.requestId}`,
+              },
+              { text: 'Deny', callback_data: `perm:deny:${request.requestId}` },
+            ],
+          ],
+        },
+      });
+      return await new Promise<PermissionApprovalDecision>((resolve) => {
+        const timer = setTimeout(() => {
+          void this.resolvePermissionPrompt(request.requestId, {
+            approved: false,
+            decidedBy: 'system',
+            reason: 'timed out',
+          });
+        }, timeoutMs);
+        this.pendingPermissionPrompts.set(request.requestId, {
+          chatId,
+          messageId: sent.message_id,
+          timer,
+          resolve,
+        });
+      });
+    } catch (err) {
+      logger.error(
+        {
+          jid,
+          requestId: request.requestId,
+          error: this.sanitizeErrorMessage(err),
+        },
+        'Failed to send Telegram permission prompt',
+      );
+      return {
+        approved: false,
+        reason: 'Failed to send approval prompt to Telegram',
+      };
+    }
+  }
+
   isConnected(): boolean {
     return this.bot !== null;
   }
@@ -581,6 +799,18 @@ export class TelegramChannel implements Channel {
   async disconnect(): Promise<void> {
     this.isStopping = true;
     this.clearPollingRetryTimer();
+    for (const [
+      requestId,
+      pending,
+    ] of this.pendingPermissionPrompts.entries()) {
+      clearTimeout(pending.timer);
+      pending.resolve({
+        approved: false,
+        decidedBy: 'system',
+        reason: 'Telegram channel disconnected',
+      });
+      this.pendingPermissionPrompts.delete(requestId);
+    }
     if (this.bot) {
       this.bot.stop();
       this.bot = null;

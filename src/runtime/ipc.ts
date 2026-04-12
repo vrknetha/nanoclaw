@@ -24,7 +24,11 @@ import {
   MEMORY_IPC_ACTIONS,
   MemoryIpcAction,
 } from '../memory/memory-ipc-contract.js';
-import { RegisteredGroup } from '../core/types.js';
+import {
+  PermissionApprovalDecision,
+  PermissionApprovalRequest,
+  RegisteredGroup,
+} from '../core/types.js';
 import { validateIpcAuthToken } from './ipc-auth.js';
 
 export interface IpcDeps {
@@ -40,12 +44,16 @@ export interface IpcDeps {
     registeredJids: Set<string>,
   ) => void;
   onSchedulerChanged: () => void;
+  requestPermissionApproval?: (
+    request: PermissionApprovalRequest,
+  ) => Promise<PermissionApprovalDecision>;
 }
 
 let ipcWatcherRunning = false;
 const IPC_RATE_LIMIT_WINDOW_MS = 60_000;
 const IPC_RATE_LIMIT_MAX_FILES_PER_WINDOW = 300;
 const MEMORY_IPC_REQUEST_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
+const PERMISSION_IPC_REQUEST_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
 const ipcRateLimitState = new Map<
   string,
   { windowStart: number; count: number }
@@ -372,6 +380,68 @@ function parseMemoryIpcRequest(
   };
 }
 
+function parsePermissionIpcRequest(
+  raw: unknown,
+  sourceGroup: string,
+): PermissionApprovalRequest {
+  if (!isPlainObject(raw)) throw new Error('Invalid permission IPC payload');
+  const authToken = toTrimmedString(raw.authToken, { maxLen: 512 }) || '';
+  if (!validateIpcAuthToken(sourceGroup, authToken)) {
+    throw new Error('Invalid permission IPC auth token');
+  }
+  const requestId = toTrimmedString(raw.requestId, { maxLen: 128 });
+  if (!requestId || !PERMISSION_IPC_REQUEST_ID_PATTERN.test(requestId)) {
+    throw new Error('Invalid permission IPC requestId');
+  }
+  const toolName = toTrimmedString(raw.toolName, { maxLen: 120 });
+  if (!toolName) throw new Error('Permission IPC toolName is required');
+  const title = toTrimmedString(raw.title, { maxLen: 2000 });
+  const displayName = toTrimmedString(raw.displayName, { maxLen: 200 });
+  const description = toTrimmedString(raw.description, { maxLen: 4000 });
+  const decisionReason = toTrimmedString(raw.decisionReason, { maxLen: 2000 });
+  const blockedPath = toTrimmedString(raw.blockedPath, { maxLen: 2048 });
+
+  return {
+    requestId,
+    sourceGroup,
+    toolName,
+    ...(title ? { title } : {}),
+    ...(displayName ? { displayName } : {}),
+    ...(description ? { description } : {}),
+    ...(decisionReason ? { decisionReason } : {}),
+    ...(blockedPath ? { blockedPath } : {}),
+  };
+}
+
+function writePermissionIpcResponse(
+  ipcBaseDir: string,
+  sourceGroup: string,
+  decision: PermissionApprovalDecision & { requestId: string },
+): void {
+  const responseDir = path.join(
+    ipcBaseDir,
+    sourceGroup,
+    'permission-responses',
+  );
+  fs.mkdirSync(responseDir, { recursive: true });
+  const responsePath = path.join(responseDir, `${decision.requestId}.json`);
+  const tmpPath = `${responsePath}.tmp`;
+  fs.writeFileSync(
+    tmpPath,
+    JSON.stringify(
+      {
+        requestId: decision.requestId,
+        approved: decision.approved,
+        ...(decision.decidedBy ? { decidedBy: decision.decidedBy } : {}),
+        ...(decision.reason ? { reason: decision.reason } : {}),
+      },
+      null,
+      2,
+    ),
+  );
+  fs.renameSync(tmpPath, responsePath);
+}
+
 function jobBelongsToSourceGroup(
   job: { group_scope: string; linked_sessions: string[] },
   sourceGroup: string,
@@ -466,6 +536,11 @@ export function startIpcWatcher(deps: IpcDeps): void {
         ipcBaseDir,
         sourceGroup,
         'memory-requests',
+      );
+      const permissionRequestsDir = path.join(
+        ipcBaseDir,
+        sourceGroup,
+        'permission-requests',
       );
 
       // Process messages from this group's IPC directory
@@ -608,6 +683,77 @@ export function startIpcWatcher(deps: IpcDeps): void {
         logger.error(
           { err, sourceGroup },
           'Error reading memory IPC requests directory',
+        );
+      }
+
+      // Process permission request/response IPC for this group
+      try {
+        if (isTrustedDirectory(permissionRequestsDir)) {
+          const permissionFiles = fs
+            .readdirSync(permissionRequestsDir)
+            .filter((f) => f.endsWith('.json'));
+          for (const file of permissionFiles) {
+            const filePath = path.join(permissionRequestsDir, file);
+            let claimedPath = filePath;
+            let requestId: string | undefined;
+            try {
+              if (!canProcessIpcFile(sourceGroup, 'permission')) {
+                throw new Error('Permission IPC rate limit exceeded');
+              }
+              claimedPath = claimIpcFile(filePath);
+              const rawRequest = JSON.parse(
+                fs.readFileSync(claimedPath, 'utf-8'),
+              );
+              const request = parsePermissionIpcRequest(
+                rawRequest,
+                sourceGroup,
+              );
+              requestId = request.requestId;
+              const decision = deps.requestPermissionApproval
+                ? await deps.requestPermissionApproval(request)
+                : {
+                    approved: false,
+                    reason: 'No channel approval handler is configured',
+                  };
+              writePermissionIpcResponse(ipcBaseDir, sourceGroup, {
+                requestId,
+                approved: decision.approved,
+                decidedBy: decision.decidedBy,
+                reason: decision.reason,
+              });
+              fs.unlinkSync(claimedPath);
+            } catch (err) {
+              if (requestId) {
+                try {
+                  writePermissionIpcResponse(ipcBaseDir, sourceGroup, {
+                    requestId,
+                    approved: false,
+                    reason: 'Failed to process permission request',
+                  });
+                } catch (writeErr) {
+                  logger.warn(
+                    { sourceGroup, requestId, err: writeErr },
+                    'Failed to write permission IPC denial fallback',
+                  );
+                }
+              }
+              logger.error(
+                { file, sourceGroup, err },
+                'Error processing permission IPC request',
+              );
+              archiveIpcErrorFile(ipcBaseDir, sourceGroup, file, claimedPath);
+            }
+          }
+        } else if (fs.existsSync(permissionRequestsDir)) {
+          logger.warn(
+            { sourceGroup, permissionRequestsDir },
+            'Ignoring untrusted permission IPC requests directory',
+          );
+        }
+      } catch (err) {
+        logger.error(
+          { err, sourceGroup },
+          'Error reading permission IPC requests directory',
         );
       }
     }

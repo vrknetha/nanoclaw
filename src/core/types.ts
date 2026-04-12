@@ -133,6 +133,22 @@ export interface JobEvent {
 }
 
 // --- Channel abstraction ---
+export interface PermissionApprovalRequest {
+  requestId: string;
+  sourceGroup: string;
+  toolName: string;
+  title?: string;
+  displayName?: string;
+  description?: string;
+  decisionReason?: string;
+  blockedPath?: string;
+}
+
+export interface PermissionApprovalDecision {
+  approved: boolean;
+  decidedBy?: string;
+  reason?: string;
+}
 
 export interface Channel {
   name: string;
@@ -145,6 +161,11 @@ export interface Channel {
   setTyping?(jid: string, isTyping: boolean): Promise<void>;
   // Optional: sync group/chat names from the platform.
   syncGroups?(force: boolean): Promise<void>;
+  // Optional: human approval flow for sensitive tool permission requests.
+  requestPermissionApproval?(
+    jid: string,
+    request: PermissionApprovalRequest,
+  ): Promise<PermissionApprovalDecision>;
 }
 
 // Callback type that channels use to deliver inbound messages

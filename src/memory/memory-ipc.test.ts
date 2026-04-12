@@ -838,7 +838,9 @@ describe('processMemoryRequest validation branches', () => {
       false,
     );
     expect(nonObject.ok).toBe(false);
-    expect(nonObject.error).toContain('procedure_save payload must be an object');
+    expect(nonObject.error).toContain(
+      'procedure_save payload must be an object',
+    );
 
     const missingRequired = await processMemoryRequest(
       {

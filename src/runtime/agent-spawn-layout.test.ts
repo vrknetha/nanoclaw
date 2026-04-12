@@ -344,7 +344,7 @@ describe('ensureGroupIpcLayout', () => {
     }
   });
 
-  it('creates all 5 IPC subdirectories', async () => {
+  it('creates all 7 IPC subdirectories', async () => {
     const root = makeTmpRoot(roots);
     const ipcDir = path.join(root, 'group-ipc');
 
@@ -361,6 +361,8 @@ describe('ensureGroupIpcLayout', () => {
       'memory-requests',
       'memory-responses',
       'messages',
+      'permission-requests',
+      'permission-responses',
       'tasks',
     ];
 
@@ -370,7 +372,7 @@ describe('ensureGroupIpcLayout', () => {
       expect(fs.statSync(fullPath).isDirectory()).toBe(true);
     }
 
-    // Exactly these 5 and nothing else
+    // Exactly these 7 and nothing else
     const actual = fs.readdirSync(ipcDir).sort();
     expect(actual).toEqual(expected);
   });
@@ -394,6 +396,8 @@ describe('ensureGroupIpcLayout', () => {
       'memory-requests',
       'memory-responses',
       'messages',
+      'permission-requests',
+      'permission-responses',
       'tasks',
     ]);
   });

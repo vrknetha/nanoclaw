@@ -16,6 +16,7 @@ vi.mock('../core/config.js', () => ({
   IDLE_TIMEOUT: 1800000, // 30min
   NANOCLAW_CONFIG_DIR: '/tmp/nanoclaw-config',
   ONECLI_URL: 'http://localhost:10254',
+  PERMISSION_APPROVAL_TIMEOUT_MS: 300000,
   TIMEZONE: 'America/Los_Angeles',
   getEffectiveModelConfig: vi.fn((groupModel?: string) =>
     groupModel

@@ -8,6 +8,7 @@ import {
   AGENT_MEMORY_ROOT,
   DATA_DIR,
   NANOCLAW_CONFIG_DIR,
+  PERMISSION_APPROVAL_TIMEOUT_MS,
   TIMEZONE,
   getEffectiveModelConfig,
 } from '../core/config.js';
@@ -147,6 +148,7 @@ export async function spawnAgent(
     NANOCLAW_IPC_DIR: hostRuntime.groupIpcDir,
     NANOCLAW_IPC_INPUT_DIR: path.join(hostRuntime.groupIpcDir, 'input'),
     NANOCLAW_IPC_AUTH_TOKEN: computeIpcAuthToken(group.folder),
+    NANOCLAW_PERMISSION_TIMEOUT_MS: String(PERMISSION_APPROVAL_TIMEOUT_MS),
     ...((AGENT_MEMORY_ROOT || '').trim()
       ? { AGENT_MEMORY_ROOT: (AGENT_MEMORY_ROOT || '').trim() }
       : {}),

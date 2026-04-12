@@ -11,6 +11,8 @@ vi.mock('../core/env.js', () => ({ readEnvFile: vi.fn(() => ({})) }));
 // Mock config
 vi.mock('../core/config.js', () => ({
   ASSISTANT_NAME: 'Andy',
+  PERMISSION_APPROVAL_TIMEOUT_MS: 300000,
+  TELEGRAM_PERMISSION_APPROVER_IDS: new Set<string>(),
   TRIGGER_PATTERN: /^@Andy\b/i,
 }));
 
@@ -45,9 +47,11 @@ vi.mock('grammy', () => ({
     errorHandler: Handler | null = null;
 
     api = {
-      sendMessage: vi.fn().mockResolvedValue(undefined),
+      sendMessage: vi.fn().mockResolvedValue({ message_id: 987 }),
       sendChatAction: vi.fn().mockResolvedValue(undefined),
       getFile: vi.fn().mockResolvedValue({ file_path: 'photos/file_0.jpg' }),
+      getChatMember: vi.fn().mockResolvedValue({ status: 'administrator' }),
+      editMessageText: vi.fn().mockResolvedValue(undefined),
     };
 
     constructor(token: string) {
@@ -193,6 +197,16 @@ async function triggerMediaMessage(
   ctx: ReturnType<typeof createMediaCtx>,
 ) {
   const handlers = currentBot().filterHandlers.get(filter) || [];
+  for (const h of handlers) await h(ctx);
+}
+
+async function triggerCallbackQuery(ctx: {
+  callbackQuery: { data: string };
+  chat: { id: number };
+  from: { id: number; first_name?: string; username?: string };
+  answerCallbackQuery: ReturnType<typeof vi.fn>;
+}) {
+  const handlers = currentBot().filterHandlers.get('callback_query:data') || [];
   for (const h of handlers) await h(ctx);
 }
 
@@ -1443,6 +1457,133 @@ describe('TelegramChannel', () => {
       await handler(ctx);
 
       expect(ctx.reply).toHaveBeenCalledWith('Andy is online.');
+    });
+  });
+
+  describe('permission approvals', () => {
+    it('sends approval prompt and resolves when an admin approves', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      const decisionPromise = channel.requestPermissionApproval(
+        'tg:100200300',
+        {
+          requestId: 'perm-1',
+          sourceGroup: 'whatsapp_main',
+          toolName: 'Bash',
+          title: 'Allow command',
+        },
+      );
+      await flushPromises();
+
+      expect(currentBot().api.sendMessage).toHaveBeenCalledWith(
+        '100200300',
+        expect.stringContaining('Permission request: perm-1'),
+        expect.objectContaining({
+          reply_markup: expect.objectContaining({
+            inline_keyboard: expect.any(Array),
+          }),
+        }),
+      );
+
+      const callbackCtx = {
+        callbackQuery: { data: 'perm:approve:perm-1' },
+        chat: { id: 100200300 },
+        from: { id: 12345, first_name: 'Ravi' },
+        answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
+      };
+      await triggerCallbackQuery(callbackCtx);
+      const decision = await decisionPromise;
+
+      expect(decision).toEqual({
+        approved: true,
+        decidedBy: 'Ravi',
+        reason: 'approved via Telegram',
+      });
+      expect(callbackCtx.answerCallbackQuery).toHaveBeenCalledWith({
+        text: 'Approved.',
+      });
+      expect(currentBot().api.editMessageText).toHaveBeenCalledWith(
+        '100200300',
+        987,
+        expect.stringContaining('Status: APPROVED by Ravi'),
+        expect.objectContaining({
+          reply_markup: { inline_keyboard: [] },
+        }),
+      );
+    });
+
+    it('rejects non-admin callbacks and keeps the request pending', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      currentBot()
+        .api.getChatMember.mockResolvedValueOnce({ status: 'member' })
+        .mockResolvedValueOnce({ status: 'administrator' });
+
+      const decisionPromise = channel.requestPermissionApproval(
+        'tg:100200300',
+        {
+          requestId: 'perm-2',
+          sourceGroup: 'whatsapp_main',
+          toolName: 'Write',
+        },
+      );
+      await flushPromises();
+
+      const deniedCtx = {
+        callbackQuery: { data: 'perm:deny:perm-2' },
+        chat: { id: 100200300 },
+        from: { id: 333, first_name: 'Visitor' },
+        answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
+      };
+      await triggerCallbackQuery(deniedCtx);
+      expect(deniedCtx.answerCallbackQuery).toHaveBeenCalledWith({
+        text: 'Only approved admins can make this decision.',
+        show_alert: true,
+      });
+
+      const approvedCtx = {
+        callbackQuery: { data: 'perm:approve:perm-2' },
+        chat: { id: 100200300 },
+        from: { id: 444, first_name: 'Admin' },
+        answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
+      };
+      await triggerCallbackQuery(approvedCtx);
+      const decision = await decisionPromise;
+      expect(decision.approved).toBe(true);
+      expect(decision.decidedBy).toBe('Admin');
+    });
+
+    it('auto-denies approval request after timeout', async () => {
+      vi.useFakeTimers();
+      try {
+        const opts = createTestOpts();
+        const channel = new TelegramChannel('test-token', opts);
+        await channel.connect();
+
+        const decisionPromise = channel.requestPermissionApproval(
+          'tg:100200300',
+          {
+            requestId: 'perm-timeout',
+            sourceGroup: 'whatsapp_main',
+            toolName: 'Edit',
+          },
+        );
+        await Promise.resolve();
+
+        await vi.advanceTimersByTimeAsync(300_000);
+        const decision = await decisionPromise;
+        expect(decision).toEqual({
+          approved: false,
+          decidedBy: 'system',
+          reason: 'timed out',
+        });
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 

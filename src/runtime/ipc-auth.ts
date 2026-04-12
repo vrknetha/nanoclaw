@@ -1,8 +1,15 @@
 import { createHmac, timingSafeEqual, randomBytes } from 'crypto';
+import { logger } from '../core/logger.js';
 
 const IPC_AUTH_SECRET =
   process.env.NANOCLAW_IPC_AUTH_SECRET?.trim() ||
-  randomBytes(32).toString('hex');
+  (() => {
+    const generated = randomBytes(32).toString('hex');
+    logger.warn(
+      'NANOCLAW_IPC_AUTH_SECRET not set; using ephemeral secret (IPC tokens will not survive restarts)',
+    );
+    return generated;
+  })();
 
 export function computeIpcAuthToken(groupFolder: string): string {
   return createHmac('sha256', IPC_AUTH_SECRET)

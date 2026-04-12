@@ -1563,6 +1563,7 @@ describe('startIpcWatcher', () => {
   const mockLstatSync = vi.fn();
   const mockExistsSync = vi.fn();
   const mockReadFileSync = vi.fn();
+  const mockWriteFileSync = vi.fn();
   const mockUnlinkSync = vi.fn();
   const mockRenameSync = vi.fn();
   const mockLoggerDebug = vi.fn();
@@ -1588,6 +1589,7 @@ describe('startIpcWatcher', () => {
         lstatSync: (...args: unknown[]) => mockLstatSync(...args),
         existsSync: (...args: unknown[]) => mockExistsSync(...args),
         readFileSync: (...args: unknown[]) => mockReadFileSync(...args),
+        writeFileSync: (...args: unknown[]) => mockWriteFileSync(...args),
         unlinkSync: (...args: unknown[]) => mockUnlinkSync(...args),
         renameSync: (...args: unknown[]) => mockRenameSync(...args),
       },
@@ -2490,6 +2492,139 @@ describe('startIpcWatcher', () => {
       }),
       'Error processing memory IPC request',
     );
+  });
+
+  it('processes valid permission IPC request file', async () => {
+    const permissionRequest = {
+      requestId: 'perm-001',
+      toolName: 'Bash',
+      title: 'Allow file write',
+      blockedPath: '/workspace/group/notes.txt',
+    };
+
+    mockReaddirSync.mockImplementation((dir: string) => {
+      if (dir === '/tmp/test-ipc/ipc') return ['whatsapp_main'];
+      if (dir.endsWith('/permission-requests')) return ['perm1.json'];
+      return [];
+    });
+    mockStatSync.mockReturnValue({ isDirectory: () => true });
+    mockExistsSync.mockImplementation((p: string) =>
+      p.endsWith('/permission-requests') ? true : false,
+    );
+    mockReadFileSync.mockReturnValue(JSON.stringify(permissionRequest));
+    const requestPermissionApproval = vi.fn(async () => ({
+      approved: true,
+      decidedBy: 'Ravi',
+      reason: 'approved via test',
+    }));
+
+    const mod = await loadIpcModule();
+    const watcherDeps: import('./ipc.js').IpcDeps = {
+      sendMessage: vi.fn(),
+      requestPermissionApproval,
+      registeredGroups: () => ({
+        'main@g.us': {
+          name: 'Main',
+          folder: 'whatsapp_main',
+          trigger: 'always',
+          added_at: '2024-01-01',
+          isMain: true,
+        },
+      }),
+      registerGroup: vi.fn(),
+      syncGroups: vi.fn(),
+      getAvailableGroups: vi.fn(() => []),
+      writeGroupsSnapshot: vi.fn(),
+      onSchedulerChanged: vi.fn(),
+    };
+
+    mod.startIpcWatcher(watcherDeps);
+
+    await vi.waitFor(() => {
+      expect(capturedSetTimeoutCallback).not.toBeNull();
+    });
+
+    expect(requestPermissionApproval).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: 'perm-001',
+        toolName: 'Bash',
+        sourceGroup: 'whatsapp_main',
+      }),
+    );
+    expect(
+      mockWriteFileSync.mock.calls.some(
+        (call: unknown[]) =>
+          typeof call[0] === 'string' &&
+          String(call[0]).includes('/permission-responses/perm-001.json.tmp') &&
+          typeof call[1] === 'string' &&
+          String(call[1]).includes('"approved": true'),
+      ),
+    ).toBe(true);
+    expect(mockUnlinkSync).toHaveBeenCalled();
+  });
+
+  it('writes deny fallback response when permission handler throws', async () => {
+    const permissionRequest = {
+      requestId: 'perm-002',
+      toolName: 'Write',
+    };
+
+    mockReaddirSync.mockImplementation((dir: string) => {
+      if (dir === '/tmp/test-ipc/ipc') return ['whatsapp_main'];
+      if (dir.endsWith('/permission-requests')) return ['perm2.json'];
+      return [];
+    });
+    mockStatSync.mockReturnValue({ isDirectory: () => true });
+    mockExistsSync.mockImplementation((p: string) =>
+      p.endsWith('/permission-requests') ? true : false,
+    );
+    mockReadFileSync.mockReturnValue(JSON.stringify(permissionRequest));
+    const requestPermissionApproval = vi.fn(async () => {
+      throw new Error('boom');
+    });
+
+    const mod = await loadIpcModule();
+    const watcherDeps: import('./ipc.js').IpcDeps = {
+      sendMessage: vi.fn(),
+      requestPermissionApproval,
+      registeredGroups: () => ({
+        'main@g.us': {
+          name: 'Main',
+          folder: 'whatsapp_main',
+          trigger: 'always',
+          added_at: '2024-01-01',
+          isMain: true,
+        },
+      }),
+      registerGroup: vi.fn(),
+      syncGroups: vi.fn(),
+      getAvailableGroups: vi.fn(() => []),
+      writeGroupsSnapshot: vi.fn(),
+      onSchedulerChanged: vi.fn(),
+    };
+
+    mod.startIpcWatcher(watcherDeps);
+
+    await vi.waitFor(() => {
+      expect(capturedSetTimeoutCallback).not.toBeNull();
+    });
+
+    expect(mockLoggerError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        file: 'perm2.json',
+        sourceGroup: 'whatsapp_main',
+      }),
+      'Error processing permission IPC request',
+    );
+    expect(
+      mockWriteFileSync.mock.calls.some(
+        (call: unknown[]) =>
+          typeof call[0] === 'string' &&
+          String(call[0]).includes('/permission-responses/perm-002.json.tmp') &&
+          typeof call[1] === 'string' &&
+          String(call[1]).includes('"approved": false'),
+      ),
+    ).toBe(true);
   });
 
   it('ignores symlinked IPC subdirectories', async () => {
@@ -3532,7 +3667,9 @@ describe('startIpcWatcher', () => {
     expect(mockLoggerError).toHaveBeenCalledWith(
       expect.objectContaining({
         file: 'task-auth.json',
-        err: expect.objectContaining({ message: 'Invalid IPC task auth token' }),
+        err: expect.objectContaining({
+          message: 'Invalid IPC task auth token',
+        }),
       }),
       'Error processing IPC task',
     );

@@ -59,6 +59,8 @@ const envConfig = readEnvFile([
   'MEMORY_CHUNK_RETENTION_DAYS',
   'MEMORY_MAX_EVENTS',
   'MEMORY_MAX_PROCEDURES_PER_GROUP',
+  'PERMISSION_APPROVAL_TIMEOUT_MS',
+  'TELEGRAM_PERMISSION_APPROVER_IDS',
 ]);
 
 export const ASSISTANT_NAME =
@@ -483,6 +485,28 @@ export const MEMORY_MAX_PROCEDURES_PER_GROUP = Math.max(
       '500',
     10,
   ) || 500,
+);
+export const PERMISSION_APPROVAL_TIMEOUT_MS = Math.max(
+  10_000,
+  parseInt(
+    process.env.PERMISSION_APPROVAL_TIMEOUT_MS ||
+      envConfig.PERMISSION_APPROVAL_TIMEOUT_MS ||
+      '300000',
+    10,
+  ) || 300_000,
+);
+function parseIdAllowlist(raw: string | undefined): Set<string> {
+  if (!raw?.trim()) return new Set<string>();
+  return new Set(
+    raw
+      .split(/[,\s]+/)
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0),
+  );
+}
+export const TELEGRAM_PERMISSION_APPROVER_IDS = parseIdAllowlist(
+  process.env.TELEGRAM_PERMISSION_APPROVER_IDS ||
+    envConfig.TELEGRAM_PERMISSION_APPROVER_IDS,
 );
 export const MEMORY_CONSOLIDATION_MAX_CLUSTERS = Math.max(
   1,

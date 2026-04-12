@@ -98,4 +98,10 @@ export function ensureGroupIpcLayout(groupIpcDir: string): void {
   fs.mkdirSync(path.join(groupIpcDir, 'input'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'memory-requests'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'memory-responses'), { recursive: true });
+  fs.mkdirSync(path.join(groupIpcDir, 'permission-requests'), {
+    recursive: true,
+  });
+  fs.mkdirSync(path.join(groupIpcDir, 'permission-responses'), {
+    recursive: true,
+  });
 }

@@ -55,6 +55,8 @@ import { startSchedulerLoop } from './runtime/task-scheduler.js';
 import {
   Channel,
   NewMessage,
+  PermissionApprovalDecision,
+  PermissionApprovalRequest,
   RegisteredGroup,
   ThinkingOverride,
 } from './core/types.js';
@@ -214,6 +216,31 @@ const groupProcessor = createGroupProcessor({
 
 async function processGroupMessages(chatJid: string): Promise<boolean> {
   return groupProcessor.processGroupMessages(chatJid);
+}
+
+async function requestChannelPermissionApproval(
+  request: PermissionApprovalRequest,
+): Promise<PermissionApprovalDecision> {
+  const mainEntries = Object.entries(registeredGroups).filter(
+    ([, group]) => group.isMain === true,
+  );
+  for (const [mainJid] of mainEntries) {
+    const channel = findChannel(channels, mainJid);
+    if (!channel?.requestPermissionApproval) continue;
+    try {
+      return await channel.requestPermissionApproval(mainJid, request);
+    } catch (err) {
+      logger.error(
+        { err, mainJid, requestId: request.requestId },
+        'Channel permission approval flow failed',
+      );
+      return { approved: false, reason: 'Permission approval flow failed' };
+    }
+  }
+  return {
+    approved: false,
+    reason: 'No main channel supports interactive permission approvals',
+  };
 }
 
 async function main(): Promise<void> {
@@ -376,6 +403,7 @@ async function main(): Promise<void> {
     writeGroupsSnapshot: (gf, im, ag, rj) =>
       writeGroupsSnapshot(gf, im, ag, rj),
     onSchedulerChanged: syncSchedulerState,
+    requestPermissionApproval: requestChannelPermissionApproval,
   });
   syncSchedulerState();
   startSessionCleanup();

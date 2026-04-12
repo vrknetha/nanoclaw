@@ -73,13 +73,34 @@ const WORKSPACE_GROUP_DIR =
   process.env.NANOCLAW_WORKSPACE_GROUP_DIR || '/workspace/group';
 const WORKSPACE_EXTRA_DIR =
   process.env.NANOCLAW_WORKSPACE_EXTRA_DIR || '/workspace/extra';
+const IPC_BASE_DIR = process.env.NANOCLAW_IPC_DIR || '/workspace/ipc';
 const IPC_INPUT_DIR =
   process.env.NANOCLAW_IPC_INPUT_DIR || '/workspace/ipc/input';
+const IPC_PERMISSION_REQUESTS_DIR = path.join(
+  IPC_BASE_DIR,
+  'permission-requests',
+);
+const IPC_PERMISSION_RESPONSES_DIR = path.join(
+  IPC_BASE_DIR,
+  'permission-responses',
+);
+const IPC_AUTH_TOKEN = process.env.NANOCLAW_IPC_AUTH_TOKEN || '';
+const PERMISSION_REQUEST_TIMEOUT_MS = Math.max(
+  10_000,
+  parseInt(process.env.NANOCLAW_PERMISSION_TIMEOUT_MS || '300000', 10) ||
+    300_000,
+);
 const IPC_MEMORY_CONTEXT_FILE =
   process.env.NANOCLAW_IPC_MEMORY_CONTEXT_FILE ||
   '/workspace/ipc/memory_context.json';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
+
+interface PermissionDecision {
+  approved: boolean;
+  decidedBy?: string;
+  reason?: string;
+}
 
 function buildSystemPrompt(append?: string):
   | {
@@ -491,6 +512,91 @@ function waitForIpcMessage(): Promise<string | null> {
   });
 }
 
+async function requestPermissionApproval(options: {
+  groupFolder: string;
+  toolName: string;
+  title?: string;
+  displayName?: string;
+  description?: string;
+  decisionReason?: string;
+  blockedPath?: string;
+}): Promise<PermissionDecision> {
+  try {
+    fs.mkdirSync(IPC_PERMISSION_REQUESTS_DIR, { recursive: true });
+    fs.mkdirSync(IPC_PERMISSION_RESPONSES_DIR, { recursive: true });
+    const requestId = `perm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const requestPath = path.join(IPC_PERMISSION_REQUESTS_DIR, `${requestId}.json`);
+    const requestTmpPath = `${requestPath}.tmp`;
+    const envelope = {
+      requestId,
+      sourceGroup: options.groupFolder,
+      toolName: options.toolName,
+      ...(options.title ? { title: options.title } : {}),
+      ...(options.displayName ? { displayName: options.displayName } : {}),
+      ...(options.description ? { description: options.description } : {}),
+      ...(options.decisionReason ? { decisionReason: options.decisionReason } : {}),
+      ...(options.blockedPath ? { blockedPath: options.blockedPath } : {}),
+      ...(IPC_AUTH_TOKEN ? { authToken: IPC_AUTH_TOKEN } : {}),
+      timestamp: new Date().toISOString(),
+    };
+    fs.writeFileSync(requestTmpPath, JSON.stringify(envelope, null, 2));
+    fs.renameSync(requestTmpPath, requestPath);
+
+    const responsePath = path.join(
+      IPC_PERMISSION_RESPONSES_DIR,
+      `${requestId}.json`,
+    );
+    const deadline = Date.now() + PERMISSION_REQUEST_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      if (fs.existsSync(responsePath)) {
+        try {
+          const raw = JSON.parse(fs.readFileSync(responsePath, 'utf-8'));
+          fs.unlinkSync(responsePath);
+          if (
+            raw &&
+            typeof raw === 'object' &&
+            (raw as { requestId?: string }).requestId === requestId
+          ) {
+            return {
+              approved: Boolean((raw as { approved?: unknown }).approved),
+              decidedBy:
+                typeof (raw as { decidedBy?: unknown }).decidedBy === 'string'
+                  ? (raw as { decidedBy: string }).decidedBy
+                  : undefined,
+              reason:
+                typeof (raw as { reason?: unknown }).reason === 'string'
+                  ? (raw as { reason: string }).reason
+                  : undefined,
+            };
+          }
+          return { approved: false, reason: 'Malformed permission response' };
+        } catch (err) {
+          return {
+            approved: false,
+            reason:
+              err instanceof Error
+                ? err.message
+                : 'Failed to read permission response',
+          };
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return {
+      approved: false,
+      reason: 'Timed out waiting for host permission approval',
+    };
+  } catch (err) {
+    return {
+      approved: false,
+      reason:
+        err instanceof Error
+          ? `Permission request failed: ${err.message}`
+          : 'Permission request failed',
+    };
+  }
+}
+
 /**
  * Run a single query and stream results via writeOutput.
  * Uses MessageStream (AsyncIterable) to keep isSingleUserTurn=false,
@@ -592,8 +698,37 @@ async function runQuery(
         'mcp__nanoclaw__*',
       ],
       env: sdkEnv,
-      permissionMode: 'bypassPermissions',
-      allowDangerouslySkipPermissions: true,
+      permissionMode: 'default',
+      canUseTool: async (toolName, input, permissionOpts) => {
+        if (permissionOpts.signal.aborted) {
+          return {
+            behavior: 'deny' as const,
+            message: 'Permission request aborted',
+          };
+        }
+        const decision = await requestPermissionApproval({
+          groupFolder: containerInput.groupFolder,
+          toolName,
+          title: permissionOpts.title,
+          displayName: permissionOpts.displayName,
+          description: permissionOpts.description,
+          decisionReason: permissionOpts.decisionReason,
+          blockedPath: permissionOpts.blockedPath,
+        });
+        if (decision.approved) {
+          log(
+            `Permission approved for tool ${toolName} by ${decision.decidedBy || 'unknown'}`,
+          );
+          return { behavior: 'allow' as const };
+        }
+        const reason = decision.reason || 'Denied by operator';
+        log(`Permission denied for tool ${toolName}: ${reason}`);
+        return {
+          behavior: 'deny' as const,
+          message: `Permission denied: ${reason}`,
+          interrupt: false,
+        };
+      },
       settingSources: ['user'],
       mcpServers: {
         nanoclaw: {
