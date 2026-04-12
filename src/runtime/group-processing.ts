@@ -348,81 +348,82 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
     let collectedOutput = '';
     const supportsStreamingChunks =
       typeof channel.sendStreamingChunk === 'function';
+    let streamFinalized = false;
+    const finalizeStreamingOutput = async (
+      reason: 'success-marker' | 'error-marker' | 'turn-complete',
+    ) => {
+      if (!supportsStreamingChunks || streamFinalized) return;
+      streamFinalized = true;
+      try {
+        await channel.sendStreamingChunk!(chatJid, '', { done: true });
+      } catch (err) {
+        logger.warn(
+          { err, group: group.name, reason },
+          'Failed to finalize streaming output',
+        );
+      }
+    };
     let retrievedItemIdsForTurn: string[] = [];
     const memoryUserId = [...missedMessages]
       .reverse()
       .find((msg) => !msg.is_from_me && !msg.is_bot_message)?.sender;
 
-    const output = await runAgent(
-      group,
-      prompt,
-      chatJid,
-      async (result) => {
-        if (result.result) {
-          const raw =
-            typeof result.result === 'string'
-              ? result.result
-              : JSON.stringify(result.result);
-          const isTelegramGroupStreaming =
-            supportsStreamingChunks &&
-            channel.name === 'telegram' &&
-            chatJid.startsWith('tg:-');
-          const text = isTelegramGroupStreaming
-            ? stripInternalTagsPreserveWhitespace(raw)
-            : formatOutboundForChannel(raw, channel.name);
-          logger.info(
-            { group: group.name },
-            `Agent output: ${raw.length} chars`,
-          );
-          if (text) {
-            if (supportsStreamingChunks) {
-              await channel.sendStreamingChunk!(chatJid, text);
-            } else {
-              await channel.sendMessage(chatJid, text);
+    let output: 'success' | 'error' = 'error';
+    try {
+      output = await runAgent(
+        group,
+        prompt,
+        chatJid,
+        async (result) => {
+          if (result.result) {
+            const raw =
+              typeof result.result === 'string'
+                ? result.result
+                : JSON.stringify(result.result);
+            const isTelegramGroupStreaming =
+              supportsStreamingChunks &&
+              channel.name === 'telegram' &&
+              chatJid.startsWith('tg:-');
+            const text = isTelegramGroupStreaming
+              ? stripInternalTagsPreserveWhitespace(raw)
+              : formatOutboundForChannel(raw, channel.name);
+            logger.info(
+              { group: group.name },
+              `Agent output: ${raw.length} chars`,
+            );
+            if (text) {
+              if (supportsStreamingChunks) {
+                await channel.sendStreamingChunk!(chatJid, text);
+              } else {
+                await channel.sendMessage(chatJid, text);
+              }
+              outputSentToUser = true;
+              collectedOutput += `${text}\n`;
             }
-            outputSentToUser = true;
-            collectedOutput += `${text}\n`;
+            resetIdleTimer();
           }
-          resetIdleTimer();
-        }
 
-        if (result.status === 'success' && !result.result) {
-          if (supportsStreamingChunks) {
-            try {
-              await channel.sendStreamingChunk!(chatJid, '', { done: true });
-            } catch (err) {
-              logger.warn(
-                { err, group: group.name },
-                'Failed to finalize streaming output',
-              );
-            }
+          if (result.status === 'success' && !result.result) {
+            await finalizeStreamingOutput('success-marker');
+            deps.queue.notifyIdle(chatJid);
           }
-          deps.queue.notifyIdle(chatJid);
-        }
 
-        if (result.status === 'error') {
-          hadError = true;
-          if (supportsStreamingChunks) {
-            try {
-              await channel.sendStreamingChunk!(chatJid, '', { done: true });
-            } catch (err) {
-              logger.warn(
-                { err, group: group.name },
-                'Failed to finalize streaming output after error',
-              );
-            }
+          if (result.status === 'error') {
+            hadError = true;
+            await finalizeStreamingOutput('error-marker');
           }
-        }
-      },
-      undefined,
-      memoryUserId,
-      (retrievedItemIds) => {
-        retrievedItemIdsForTurn = retrievedItemIds;
-      },
-    );
-
-    await channel.setTyping?.(chatJid, false);
-    if (idleTimer) clearTimeout(idleTimer);
+        },
+        undefined,
+        memoryUserId,
+        (retrievedItemIds) => {
+          retrievedItemIdsForTurn = retrievedItemIds;
+        },
+      );
+    } finally {
+      await finalizeStreamingOutput('turn-complete');
+      await channel.setTyping?.(chatJid, false);
+      if (idleTimer) clearTimeout(idleTimer);
+    }
 
     if (output === 'error' || hadError) {
       if (outputSentToUser) {

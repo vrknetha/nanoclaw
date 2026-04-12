@@ -1070,6 +1070,43 @@ describe('createGroupProcessor', () => {
   // =======================================================================
 
   describe('output handling', () => {
+    it('finalizes streaming once when agent only emits text output', async () => {
+      const streamingChannel = makeChannel({
+        sendStreamingChunk: vi.fn().mockResolvedValue(undefined),
+      });
+      const { deps } = setupHappyPath();
+      deps.channels = [streamingChannel];
+      mockFindChannel.mockReturnValue(streamingChannel);
+
+      mockSpawnAgent.mockImplementation(
+        async (
+          _group: RegisteredGroup,
+          _input: unknown,
+          _onProc: unknown,
+          onOutput?: (output: AgentOutput) => Promise<void>,
+        ) => {
+          await onOutput?.({ status: 'success', result: 'stream text' });
+          return { status: 'success', result: 'stream text' } as AgentOutput;
+        },
+      );
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      await processGroupMessages('group1@g.us');
+
+      expect(streamingChannel.sendStreamingChunk).toHaveBeenCalledTimes(2);
+      expect(streamingChannel.sendStreamingChunk).toHaveBeenNthCalledWith(
+        1,
+        'group1@g.us',
+        'stream text',
+      );
+      expect(streamingChannel.sendStreamingChunk).toHaveBeenNthCalledWith(
+        2,
+        'group1@g.us',
+        '',
+        { done: true },
+      );
+    });
+
     it('handles non-string result by JSON.stringifying', async () => {
       const agentOutput: AgentOutput = {
         status: 'success',

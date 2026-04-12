@@ -1051,6 +1051,9 @@ export class TelegramChannel implements Channel {
       : undefined;
     const key = this.buildDraftStreamKey(jid, options.threadId);
     let state = this.activeDraftStreams.get(key);
+    if (!state && !text && options.done) {
+      return;
+    }
     if (!state) {
       const draftThreadId = Number.isFinite(parsedThreadId)
         ? parsedThreadId

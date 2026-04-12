@@ -1365,6 +1365,20 @@ describe('TelegramChannel', () => {
   });
 
   describe('sendStreamingChunk', () => {
+    it('ignores done=true when no private draft stream is active', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      currentBot().api.sendMessageDraft.mockClear();
+      currentBot().api.sendMessage.mockClear();
+
+      await channel.sendStreamingChunk('tg:100200300', '', { done: true });
+
+      expect(currentBot().api.sendMessageDraft).not.toHaveBeenCalled();
+      expect(currentBot().api.sendMessage).not.toHaveBeenCalled();
+    });
+
     it('uses sendMessageDraft in private chats and sends final message on done', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
