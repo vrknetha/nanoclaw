@@ -155,6 +155,11 @@ export interface StreamingChunkOptions {
   done?: boolean;
 }
 
+export interface ProgressUpdateOptions {
+  threadId?: string;
+  done?: boolean;
+}
+
 export interface Channel {
   name: string;
   connect(): Promise<void>;
@@ -169,6 +174,12 @@ export interface Channel {
     jid: string,
     text: string,
     options?: StreamingChunkOptions,
+  ): Promise<void>;
+  // Optional: liveness/progress status sink (e.g. "still working...").
+  sendProgressUpdate?(
+    jid: string,
+    text: string,
+    options?: ProgressUpdateOptions,
   ): Promise<void>;
   // Optional: sync group/chat names from the platform.
   syncGroups?(force: boolean): Promise<void>;

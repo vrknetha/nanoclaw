@@ -1424,6 +1424,51 @@ describe('TelegramChannel', () => {
     });
   });
 
+  describe('sendProgressUpdate', () => {
+    it('sends first progress message then edits it on updates', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      await channel.sendProgressUpdate('tg:-1001234567890', 'Working on it...');
+      await channel.sendProgressUpdate(
+        'tg:-1001234567890',
+        'Still working (1m 00s)...',
+      );
+
+      expect(currentBot().api.sendMessage).toHaveBeenCalledWith(
+        '-1001234567890',
+        'Working on it...',
+        expect.objectContaining({ parse_mode: 'MarkdownV2' }),
+      );
+      expect(currentBot().api.editMessageText).toHaveBeenCalledWith(
+        '-1001234567890',
+        987,
+        'Still working (1m 00s)...',
+        expect.objectContaining({ parse_mode: 'MarkdownV2' }),
+      );
+    });
+
+    it('clears progress state on done and starts a fresh message next run', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      await channel.sendProgressUpdate('tg:100200300', 'Working on it...');
+      await channel.sendProgressUpdate('tg:100200300', 'Done in 10s.', {
+        done: true,
+      });
+
+      currentBot().api.sendMessage.mockClear();
+      currentBot().api.editMessageText.mockClear();
+
+      await channel.sendProgressUpdate('tg:100200300', 'Working on it...');
+
+      expect(currentBot().api.sendMessage).toHaveBeenCalledTimes(1);
+      expect(currentBot().api.editMessageText).not.toHaveBeenCalled();
+    });
+  });
+
   // --- ownsJid ---
 
   describe('ownsJid', () => {

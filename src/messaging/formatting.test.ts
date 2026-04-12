@@ -288,19 +288,60 @@ describe('formatOutbound', () => {
   });
 });
 
-describe('parseTextStyles', () => {
-  it('passes through discord unchanged', () => {
+describe('parseTextStyles — passthrough channels', () => {
+  it('passes text through unchanged on discord', () => {
     const md = '**bold** and *italic* and [link](https://example.com)';
     expect(parseTextStyles(md, 'discord')).toBe(md);
   });
 
-  it('converts bold and italic markers for telegram', () => {
-    expect(parseTextStyles('**bold** *italic*', 'telegram')).toBe(
+  it('passes text through unchanged on signal', () => {
+    const md = '**bold** and *italic* and [link](https://example.com)';
+    expect(parseTextStyles(md, 'signal')).toBe(md);
+  });
+});
+
+describe('parseTextStyles — bold and italic', () => {
+  it('converts **bold** to *bold* on whatsapp', () => {
+    expect(parseTextStyles('**hello**', 'whatsapp')).toBe('*hello*');
+  });
+
+  it('converts **bold** to *bold* on telegram', () => {
+    expect(parseTextStyles('say **this** now', 'telegram')).toBe(
+      'say *this* now',
+    );
+  });
+
+  it('converts **bold** to *bold* on slack', () => {
+    expect(parseTextStyles('**hello**', 'slack')).toBe('*hello*');
+  });
+
+  it('converts *italic* to _italic_ on telegram', () => {
+    expect(parseTextStyles('*italic*', 'telegram')).toBe('_italic_');
+  });
+
+  it('preserves ordering: **bold** *italic* -> *bold* _italic_', () => {
+    expect(parseTextStyles('**bold** *italic*', 'whatsapp')).toBe(
       '*bold* _italic_',
     );
   });
 
-  it('converts links for whatsapp and telegram', () => {
+  it('does not convert lone stars', () => {
+    expect(parseTextStyles('a * b * c', 'whatsapp')).toBe('a * b * c');
+  });
+});
+
+describe('parseTextStyles — headings and links', () => {
+  it('converts markdown headings to bold markers', () => {
+    expect(parseTextStyles('## Hello World', 'telegram')).toBe('*Hello World*');
+    expect(parseTextStyles('### Section', 'whatsapp')).toBe('*Section*');
+  });
+
+  it('only converts headings at line start', () => {
+    const input = 'not a ## heading in middle';
+    expect(parseTextStyles(input, 'whatsapp')).toBe(input);
+  });
+
+  it('converts links to plain text on whatsapp and telegram', () => {
     expect(parseTextStyles('[Link](https://example.com)', 'whatsapp')).toBe(
       'Link (https://example.com)',
     );
@@ -309,15 +350,38 @@ describe('parseTextStyles', () => {
     );
   });
 
-  it('converts links for slack', () => {
-    expect(parseTextStyles('[Click](https://example.com)', 'slack')).toBe(
-      '<https://example.com|Click>',
+  it('converts links to Slack native syntax', () => {
+    expect(parseTextStyles('[Click here](https://example.com)', 'slack')).toBe(
+      '<https://example.com|Click here>',
     );
   });
+});
 
+describe('parseTextStyles — code and horizontal-rule protection', () => {
   it('does not transform content inside code spans', () => {
     expect(parseTextStyles('**bold** and `*code*`', 'telegram')).toBe(
       '*bold* and `*code*`',
+    );
+  });
+
+  it('does not transform markers inside fenced code blocks', () => {
+    const input = '```\n**not bold**\n```';
+    expect(parseTextStyles(input, 'whatsapp')).toBe(input);
+  });
+
+  it('transforms text outside fenced blocks but keeps block content raw', () => {
+    const input = '**bold**\n```\n**raw**\n```\n*italic*';
+    expect(parseTextStyles(input, 'telegram')).toBe(
+      '*bold*\n```\n**raw**\n```\n_italic_',
+    );
+  });
+
+  it('strips markdown horizontal rules', () => {
+    expect(parseTextStyles('above\n---\nbelow', 'telegram')).toBe(
+      'above\n\nbelow',
+    );
+    expect(parseTextStyles('above\n***\nbelow', 'whatsapp')).toBe(
+      'above\n\nbelow',
     );
   });
 });
@@ -332,6 +396,26 @@ describe('parseSignalStyles', () => {
       start: 9,
       length: 6,
     });
+  });
+
+  it('strips link syntax without adding styles', () => {
+    const { text, textStyle } = parseSignalStyles(
+      '[Click here](https://example.com)',
+    );
+    expect(text).toBe('Click here (https://example.com)');
+    expect(textStyle).toHaveLength(0);
+  });
+
+  it('strips horizontal rules', () => {
+    const { text, textStyle } = parseSignalStyles('above\n---\nbelow');
+    expect(text).toBe('above\nbelow');
+    expect(textStyle).toHaveLength(0);
+  });
+
+  it('marks fenced code blocks as MONOSPACE', () => {
+    const { text, textStyle } = parseSignalStyles('```\n**not bold**\n```');
+    expect(text).toBe('**not bold**');
+    expect(textStyle).toEqual([{ style: 'MONOSPACE', start: 0, length: 12 }]);
   });
 
   it('does not italicize snake_case', () => {

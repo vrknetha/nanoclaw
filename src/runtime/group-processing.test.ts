@@ -1063,6 +1063,93 @@ describe('createGroupProcessor', () => {
 
       expect(deps.queue.closeStdin).not.toHaveBeenCalled();
     });
+
+    it('keeps typing heartbeat alive and posts elapsed progress for long runs', async () => {
+      const group = makeGroup({ isMain: true });
+      const messages = [makeMessage()];
+      const channel = makeChannel({
+        sendProgressUpdate: vi.fn().mockResolvedValue(undefined),
+      });
+      const { deps } = setupHappyPath({ group, messages });
+      deps.channels = [channel];
+      mockFindChannel.mockReturnValue(channel);
+
+      mockSpawnAgent.mockImplementation(
+        async (
+          _group: RegisteredGroup,
+          _input: unknown,
+          _onProc: unknown,
+          _onOutput?: (output: AgentOutput) => Promise<void>,
+        ) => {
+          await vi.advanceTimersByTimeAsync(125_000);
+          return { status: 'success', result: 'done' } as AgentOutput;
+        },
+      );
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      await processGroupMessages('group1@g.us');
+
+      expect(
+        (channel.setTyping as ReturnType<typeof vi.fn>).mock.calls.length,
+      ).toBeGreaterThan(3);
+      expect(channel.sendProgressUpdate).toHaveBeenCalledWith(
+        'group1@g.us',
+        'Working on it...',
+      );
+      expect(
+        (channel.sendProgressUpdate as ReturnType<typeof vi.fn>).mock.calls.some(
+          (call) =>
+            call[0] === 'group1@g.us' &&
+            typeof call[1] === 'string' &&
+            call[1].startsWith('Still working ('),
+        ),
+      ).toBe(true);
+      expect(
+        (channel.sendProgressUpdate as ReturnType<typeof vi.fn>).mock.calls.some(
+          (call) =>
+            call[0] === 'group1@g.us' &&
+            typeof call[1] === 'string' &&
+            call[1].startsWith('Done in ') &&
+            call[2]?.done === true,
+        ),
+      ).toBe(true);
+    });
+
+    it('posts no-output warning for long silent runs without auto-failing', async () => {
+      const group = makeGroup({ isMain: true });
+      const messages = [makeMessage()];
+      const channel = makeChannel({
+        sendProgressUpdate: vi.fn().mockResolvedValue(undefined),
+      });
+      const { deps } = setupHappyPath({ group, messages });
+      deps.channels = [channel];
+      mockFindChannel.mockReturnValue(channel);
+
+      mockSpawnAgent.mockImplementation(
+        async (
+          _group: RegisteredGroup,
+          _input: unknown,
+          _onProc: unknown,
+          _onOutput?: (output: AgentOutput) => Promise<void>,
+        ) => {
+          await vi.advanceTimersByTimeAsync(190_000);
+          return { status: 'success', result: 'done' } as AgentOutput;
+        },
+      );
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      const ok = await processGroupMessages('group1@g.us');
+
+      expect(ok).toBe(true);
+      expect(
+        (channel.sendProgressUpdate as ReturnType<typeof vi.fn>).mock.calls.some(
+          (call) =>
+            call[0] === 'group1@g.us' &&
+            typeof call[1] === 'string' &&
+            call[1].startsWith('No new output yet, still running'),
+        ),
+      ).toBe(true);
+    });
   });
 
   // =======================================================================

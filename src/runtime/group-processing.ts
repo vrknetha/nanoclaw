@@ -43,6 +43,18 @@ import {
   formatRuntimeDiagnosticsMessage,
 } from './runtime-diagnostics.js';
 
+const TYPING_HEARTBEAT_INTERVAL_MS = 4_000;
+const ELAPSED_PROGRESS_INTERVAL_MS = 60_000;
+const NO_OUTPUT_WARNING_INTERVAL_MS = 180_000;
+
+function formatElapsed(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes <= 0) return `${seconds}s`;
+  return `${minutes}m ${seconds}s`;
+}
+
 export interface GroupProcessingDeps {
   channels: Channel[];
   getGroup: (chatJid: string) => RegisteredGroup | undefined;
@@ -343,6 +355,68 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
     };
 
     await channel.setTyping?.(chatJid, true);
+    const startedAt = Date.now();
+    let lastAgentProgressAt = startedAt;
+    let lastNoOutputWarningAt = 0;
+    let lastElapsedProgressAt = 0;
+    let typingHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
+    let progressTimer: ReturnType<typeof setInterval> | null = null;
+    if (channel.sendProgressUpdate) {
+      try {
+        await channel.sendProgressUpdate(chatJid, 'Working on it...');
+      } catch (err) {
+        logger.debug(
+          { err, group: group.name },
+          'Failed to send initial progress update',
+        );
+      }
+    }
+    typingHeartbeatTimer = setInterval(() => {
+      void channel
+        .setTyping?.(chatJid, true)
+        .catch((err) =>
+          logger.debug(
+            { err, group: group.name },
+            'Failed to refresh typing heartbeat',
+          ),
+        );
+    }, TYPING_HEARTBEAT_INTERVAL_MS);
+    progressTimer = setInterval(() => {
+      if (!channel.sendProgressUpdate) return;
+      const now = Date.now();
+      const elapsedMs = now - startedAt;
+      if (now - lastElapsedProgressAt >= ELAPSED_PROGRESS_INTERVAL_MS) {
+        lastElapsedProgressAt = now;
+        void channel
+          .sendProgressUpdate(
+            chatJid,
+            `Still working (${formatElapsed(elapsedMs)})...`,
+          )
+          .catch((err) =>
+            logger.debug(
+              { err, group: group.name },
+              'Failed to send elapsed progress update',
+            ),
+          );
+      }
+      if (
+        now - lastAgentProgressAt >= NO_OUTPUT_WARNING_INTERVAL_MS &&
+        now - lastNoOutputWarningAt >= NO_OUTPUT_WARNING_INTERVAL_MS
+      ) {
+        lastNoOutputWarningAt = now;
+        void channel
+          .sendProgressUpdate(
+            chatJid,
+            `No new output yet, still running (${formatElapsed(elapsedMs)})...`,
+          )
+          .catch((err) =>
+            logger.debug(
+              { err, group: group.name },
+              'Failed to send no-output warning',
+            ),
+          );
+      }
+    }, 5_000);
     let hadError = false;
     let outputSentToUser = false;
     let collectedOutput = '';
@@ -375,6 +449,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
         prompt,
         chatJid,
         async (result) => {
+          lastAgentProgressAt = Date.now();
           if (result.result) {
             const raw =
               typeof result.result === 'string'
@@ -421,6 +496,23 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
       );
     } finally {
       await finalizeStreamingOutput('turn-complete');
+      if (typingHeartbeatTimer) clearInterval(typingHeartbeatTimer);
+      if (progressTimer) clearInterval(progressTimer);
+      const elapsed = formatElapsed(Date.now() - startedAt);
+      if (channel.sendProgressUpdate) {
+        const finalStatus =
+          output === 'error' || hadError
+            ? `Failed after ${elapsed}.`
+            : `Done in ${elapsed}.`;
+        try {
+          await channel.sendProgressUpdate(chatJid, finalStatus, { done: true });
+        } catch (err) {
+          logger.debug(
+            { err, group: group.name },
+            'Failed to send final progress update',
+          );
+        }
+      }
       await channel.setTyping?.(chatJid, false);
       if (idleTimer) clearTimeout(idleTimer);
     }

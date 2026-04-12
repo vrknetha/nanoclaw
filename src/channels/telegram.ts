@@ -22,6 +22,7 @@ import {
   OnInboundMessage,
   PermissionApprovalDecision,
   PermissionApprovalRequest,
+  ProgressUpdateOptions,
   RegisteredGroup,
   StreamingChunkOptions,
 } from '../core/types.js';
@@ -50,6 +51,12 @@ type ActiveGroupStreamState = {
   rawBuffer: string;
   messageId?: number;
   lastFlushAt: number;
+};
+type ActiveProgressState = {
+  chatId: string;
+  threadId?: number;
+  messageId?: number;
+  lastText: string;
 };
 
 export interface TelegramChannelOpts {
@@ -243,6 +250,7 @@ export class TelegramChannel implements Channel {
   >();
   private activeDraftStreams = new Map<string, ActiveDraftStreamState>();
   private activeGroupStreams = new Map<string, ActiveGroupStreamState>();
+  private activeProgressMessages = new Map<string, ActiveProgressState>();
   private nextDraftIdOffset = 1;
 
   constructor(botToken: string, opts: TelegramChannelOpts) {
@@ -1123,6 +1131,73 @@ export class TelegramChannel implements Channel {
     }
   }
 
+  async sendProgressUpdate(
+    jid: string,
+    text: string,
+    options: ProgressUpdateOptions = {},
+  ): Promise<void> {
+    if (!this.bot) return;
+    const numericId = jid.replace(/^tg:/, '');
+    const parsedThreadId = options.threadId
+      ? Number.parseInt(options.threadId, 10)
+      : undefined;
+    const key = `progress:${this.buildDraftStreamKey(jid, options.threadId)}`;
+    const nextText = text.trim();
+    if (!nextText) {
+      if (options.done) this.activeProgressMessages.delete(key);
+      return;
+    }
+
+    const sendOptions = Number.isFinite(parsedThreadId)
+      ? { message_thread_id: parsedThreadId }
+      : {};
+    const existing = this.activeProgressMessages.get(key);
+    if (!existing) {
+      const messageId = await sendTelegramMessageWithResult(
+        this.bot.api,
+        numericId,
+        nextText,
+        sendOptions,
+      );
+      if (!options.done) {
+        this.activeProgressMessages.set(key, {
+          chatId: numericId,
+          threadId: Number.isFinite(parsedThreadId) ? parsedThreadId : undefined,
+          messageId,
+          lastText: nextText,
+        });
+      }
+      return;
+    }
+
+    if (existing.lastText === nextText) {
+      if (options.done) this.activeProgressMessages.delete(key);
+      return;
+    }
+
+    if (existing.messageId) {
+      await editTelegramMessage(
+        this.bot.api,
+        numericId,
+        existing.messageId,
+        nextText,
+      );
+    } else {
+      existing.messageId = await sendTelegramMessageWithResult(
+        this.bot.api,
+        numericId,
+        nextText,
+        sendOptions,
+      );
+    }
+    existing.lastText = nextText;
+    if (options.done) {
+      this.activeProgressMessages.delete(key);
+    } else {
+      this.activeProgressMessages.set(key, existing);
+    }
+  }
+
   async requestPermissionApproval(
     jid: string,
     request: PermissionApprovalRequest,
@@ -1204,6 +1279,7 @@ export class TelegramChannel implements Channel {
     }
     this.activeDraftStreams.clear();
     this.activeGroupStreams.clear();
+    this.activeProgressMessages.clear();
     for (const [
       requestId,
       pending,
