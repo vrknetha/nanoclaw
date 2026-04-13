@@ -146,6 +146,19 @@ describe('scheduler_upsert_job', () => {
     expect(job!.next_run).toBeNull();
   });
 
+  it('stores optional model override on upsert', async () => {
+    await upsertViaIpc({
+      jobId: 'model-job',
+      model: 'claude-sonnet-4-6',
+      schedule_type: 'manual',
+      schedule_value: '',
+    });
+
+    const job = getJobById('model-job');
+    expect(job).toBeDefined();
+    expect(job!.model).toBe('claude-sonnet-4-6');
+  });
+
   it('rejects invalid cron expression', async () => {
     await upsertViaIpc({
       jobId: 'bad-cron',
@@ -365,6 +378,23 @@ describe('scheduler_update_job', () => {
     expect(job!.name).toBe('Updated Name');
     expect(job!.prompt).toBe('new prompt');
     expect(job!.script).toBeNull();
+    expect(deps.onSchedulerChanged).toHaveBeenCalled();
+  });
+
+  it('updates job model override', async () => {
+    await processTaskIpc(
+      {
+        type: 'scheduler_update_job',
+        jobId: 'upd-job',
+        model: 'claude-opus-4-1',
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+
+    const job = getJobById('upd-job');
+    expect(job!.model).toBe('claude-opus-4-1');
     expect(deps.onSchedulerChanged).toHaveBeenCalled();
   });
 

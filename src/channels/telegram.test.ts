@@ -1413,7 +1413,7 @@ describe('TelegramChannel', () => {
       expect(currentBot().api.sendMessage).toHaveBeenCalledWith(
         '-1001234567890',
         'group update',
-        expect.objectContaining({ parse_mode: 'MarkdownV2' }),
+        {},
       );
       expect(currentBot().api.editMessageText).toHaveBeenCalledWith(
         '-1001234567890',
@@ -1421,6 +1421,29 @@ describe('TelegramChannel', () => {
         'group update',
         expect.objectContaining({ parse_mode: 'MarkdownV2' }),
       );
+    });
+
+    it('does not duplicate final group message when edit returns "message is not modified"', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      currentBot().api.editMessageText.mockRejectedValue(
+        new Error('Bad Request: message is not modified'),
+      );
+
+      await channel.sendStreamingChunk('tg:-1001234567890', 'group update');
+      await channel.sendStreamingChunk('tg:-1001234567890', '', { done: true });
+
+      // first chunk creates the stream message; done path should not resend
+      // identical content on "message is not modified".
+      expect(currentBot().api.sendMessage).toHaveBeenCalledTimes(1);
+      expect(currentBot().api.sendMessage).toHaveBeenCalledWith(
+        '-1001234567890',
+        'group update',
+        {},
+      );
+      expect(currentBot().api.editMessageText).toHaveBeenCalled();
     });
   });
 
@@ -1466,6 +1489,27 @@ describe('TelegramChannel', () => {
 
       expect(currentBot().api.sendMessage).toHaveBeenCalledTimes(1);
       expect(currentBot().api.editMessageText).not.toHaveBeenCalled();
+    });
+
+    it('falls back to a new progress message when edit fails', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      await channel.sendProgressUpdate('tg:100200300', 'Working on it...');
+      currentBot().api.editMessageText.mockRejectedValue(
+        new Error('message can not be edited'),
+      );
+
+      await channel.sendProgressUpdate('tg:100200300', 'Still working...');
+
+      expect(currentBot().api.editMessageText).toHaveBeenCalled();
+      expect(currentBot().api.sendMessage).toHaveBeenCalledTimes(2);
+      expect(currentBot().api.sendMessage).toHaveBeenLastCalledWith(
+        '100200300',
+        'Still working...',
+        expect.objectContaining({ parse_mode: 'MarkdownV2' }),
+      );
     });
   });
 

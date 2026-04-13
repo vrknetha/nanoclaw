@@ -16,7 +16,7 @@ export interface ThinkingOverride {
 
 /**
  * Mount Allowlist - Security configuration for additional mounts
- * This file should be stored at ~/myclaw/mount-allowlist.json
+ * This file should be stored at AGENT_ROOT/mount-allowlist.json
  * and is NOT mounted into any container, making it tamper-proof from agents.
  */
 export interface MountAllowlist {
@@ -82,6 +82,7 @@ export interface Job {
   id: string;
   name: string;
   prompt: string;
+  model?: string | null;
   script?: string | null;
   schedule_type: JobScheduleType;
   schedule_value: string;

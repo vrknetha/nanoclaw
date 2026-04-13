@@ -66,6 +66,9 @@ export class GroupQueue {
 
     if (state.active) {
       state.pendingMessages = true;
+      if (state.idleWaiting) {
+        this.closeStdin(groupJid);
+      }
       logger.debug({ groupJid }, 'Container active, message queued');
       return;
     }
@@ -159,7 +162,12 @@ export class GroupQueue {
    */
   sendMessage(groupJid: string, text: string): boolean {
     const state = this.getGroup(groupJid);
-    if (!state.active || !state.groupFolder || state.isTaskContainer)
+    if (
+      !state.active ||
+      !state.groupFolder ||
+      state.isTaskContainer ||
+      state.idleWaiting
+    )
       return false;
     state.idleWaiting = false; // Agent is about to receive work, no longer idle
 
@@ -190,6 +198,58 @@ export class GroupQueue {
       fs.writeFileSync(path.join(inputDir, '_close'), '');
     } catch {
       // ignore
+    }
+  }
+
+  /**
+   * Stop the currently active run for a group using SIGTERM only.
+   * Returns true when a live process was signaled, false otherwise.
+   */
+  stopGroup(groupJid: string): boolean {
+    const state = this.getGroup(groupJid);
+    const proc = state.process;
+    if (!state.active || !proc || proc.killed) return false;
+
+    // Ask the runner to close cleanly as well.
+    this.closeStdin(groupJid);
+
+    const pid = proc.pid;
+    if (typeof pid !== 'number' || pid <= 0) {
+      try {
+        proc.kill('SIGTERM');
+        logger.warn({ groupJid }, 'Stop requested for active run (SIGTERM)');
+        return true;
+      } catch (err) {
+        logger.warn(
+          { groupJid, err },
+          'Failed to stop active run (missing pid)',
+        );
+        return false;
+      }
+    }
+
+    try {
+      process.kill(-pid, 'SIGTERM');
+      logger.warn(
+        { groupJid, pid },
+        'Stop requested for active run (SIGTERM process group)',
+      );
+      return true;
+    } catch {
+      try {
+        process.kill(pid, 'SIGTERM');
+        logger.warn(
+          { groupJid, pid },
+          'Stop requested for active run (SIGTERM process)',
+        );
+        return true;
+      } catch (err) {
+        logger.warn(
+          { groupJid, pid, err },
+          'Failed to stop active run (SIGTERM)',
+        );
+        return false;
+      }
     }
   }
 

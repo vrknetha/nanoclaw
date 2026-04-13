@@ -521,7 +521,7 @@ describe('createGroupProcessor', () => {
       ]);
     });
 
-    it('notifies idle on final success marker from onOutput callback', async () => {
+    it('notifies idle and requests stdin close on final success marker from onOutput callback', async () => {
       const { deps } = setupHappyPath();
       mockSpawnAgent.mockImplementation(
         async (
@@ -540,6 +540,7 @@ describe('createGroupProcessor', () => {
       await processGroupMessages('group1@g.us');
 
       expect(deps.queue.notifyIdle).toHaveBeenCalledWith('group1@g.us');
+      expect(deps.queue.closeStdin).toHaveBeenCalledWith('group1@g.us');
     });
 
     it('writes job and group snapshots via runAgent', async () => {

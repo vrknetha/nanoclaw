@@ -41,12 +41,14 @@ function makeDeps(overrides: Partial<MessageLoopDeps> = {}): MessageLoopDeps & {
   cursors: Record<string, string>;
   sentTo: string[];
   closedStdin: string[];
+  stoppedGroups: string[];
   savedCount: number;
 } {
   const enqueued: string[] = [];
   const cursors: Record<string, string> = {};
   const sentTo: string[] = [];
   const closedStdin: string[] = [];
+  const stoppedGroups: string[] = [];
   let savedCount = 0;
 
   const deps: MessageLoopDeps & {
@@ -54,6 +56,7 @@ function makeDeps(overrides: Partial<MessageLoopDeps> = {}): MessageLoopDeps & {
     cursors: Record<string, string>;
     sentTo: string[];
     closedStdin: string[];
+    stoppedGroups: string[];
     savedCount: number;
   } = {
     assistantName: 'Andy',
@@ -94,11 +97,16 @@ function makeDeps(overrides: Partial<MessageLoopDeps> = {}): MessageLoopDeps & {
       closeStdin: (chatJid: string) => {
         closedStdin.push(chatJid);
       },
+      stopGroup: (chatJid: string) => {
+        stoppedGroups.push(chatJid);
+        return true;
+      },
     },
     enqueued,
     cursors,
     sentTo,
     closedStdin,
+    stoppedGroups,
     savedCount,
     ...overrides,
   };
@@ -323,6 +331,38 @@ describe('startMessagePollingLoop', () => {
     expect(deps.enqueued).toContain('group@g.us');
   });
 
+  it('handles /stop by stopping the active run and enqueuing', async () => {
+    const msg = {
+      id: 1,
+      chat_jid: 'group@g.us',
+      sender: 'user@s.whatsapp.net',
+      content: '@Andy /stop',
+      timestamp: '2024-01-01T00:00:01.000Z',
+      is_from_me: false,
+      message_id: 'msg-1',
+      reply_to_message_id: null,
+      reply_to_content: null,
+      sender_name: 'User',
+    };
+
+    mockGetNewMessages.mockReturnValueOnce({
+      messages: [msg],
+      newTimestamp: '2024-01-01T00:00:01.000Z',
+    });
+    mockExtractSessionCommand.mockReturnValue({ kind: 'stop', raw: '/stop' });
+    mockIsSessionCommandAllowed.mockReturnValue(true);
+
+    const deps = makeDeps();
+    const { startMessagePollingLoop } = await import('./message-loop.js');
+
+    const loopPromise = startMessagePollingLoop(deps);
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(deps.stoppedGroups).toContain('group@g.us');
+    expect(deps.closedStdin).toHaveLength(0);
+    expect(deps.enqueued).toContain('group@g.us');
+  });
+
   it('skips non-main groups without trigger match', async () => {
     const msg = {
       id: 1,
@@ -452,6 +492,45 @@ describe('startMessagePollingLoop', () => {
     // setTyping was called and rejected, but the loop survived
     expect(setTypingMock).toHaveBeenCalledWith('group@g.us', true);
     expect(deps.sentTo).toContain('group@g.us');
+  });
+
+  it('sends follow-up progress update when piping to active container', async () => {
+    const msg = {
+      id: '1',
+      chat_jid: 'group@g.us',
+      sender: 'user@s.whatsapp.net',
+      content: 'hello again',
+      timestamp: '2024-01-01T00:00:01.000Z',
+      is_from_me: false,
+      sender_name: 'User',
+    };
+
+    mockGetNewMessages.mockReturnValueOnce({
+      messages: [msg],
+      newTimestamp: '2024-01-01T00:00:01.000Z',
+    });
+    mockGetMessagesSince.mockReturnValue([msg]);
+
+    const sendProgressUpdateMock = vi.fn().mockResolvedValue(undefined);
+    const deps = makeDeps({
+      findChannel: () =>
+        ({
+          name: 'test',
+          ownsJid: () => true,
+          sendMessage: async () => {},
+          setTyping: vi.fn().mockResolvedValue(undefined),
+          sendProgressUpdate: sendProgressUpdateMock,
+        }) as unknown as Channel,
+    });
+    const { startMessagePollingLoop } = await import('./message-loop.js');
+
+    const loopPromise = startMessagePollingLoop(deps);
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(sendProgressUpdateMock).toHaveBeenCalledWith(
+      'group@g.us',
+      'Still working on it, got your follow-up.',
+    );
   });
 
   it('skips groups not in registeredGroups', async () => {

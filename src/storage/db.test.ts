@@ -525,6 +525,7 @@ describe('job CRUD', () => {
       id: 'job-1',
       name: 'daily-summary',
       prompt: 'summarize',
+      model: 'claude-sonnet-4-6',
       schedule_type: 'interval',
       schedule_value: '60000',
       linked_sessions: ['group@g.us'],
@@ -537,6 +538,7 @@ describe('job CRUD', () => {
     const job = getJobById('job-1');
     expect(job).toBeDefined();
     expect(job!.name).toBe('daily-summary');
+    expect(job!.model).toBe('claude-sonnet-4-6');
     expect(job!.linked_sessions).toEqual(['group@g.us']);
   });
 
@@ -556,11 +558,13 @@ describe('job CRUD', () => {
 
     updateJob('job-2', {
       status: 'active',
+      model: 'claude-opus-4-1',
       max_retries: 5,
       retry_backoff_ms: 7000,
     });
     const job = getJobById('job-2');
     expect(job?.status).toBe('active');
+    expect(job?.model).toBe('claude-opus-4-1');
     expect(job?.max_retries).toBe(5);
     expect(job?.retry_backoff_ms).toBe(7000);
   });

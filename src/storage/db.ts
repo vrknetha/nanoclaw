@@ -138,6 +138,7 @@ function createSchema(database: Database.Database): void {
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       prompt TEXT NOT NULL,
+      model TEXT DEFAULT NULL,
       script TEXT,
       schedule_type TEXT NOT NULL,
       schedule_value TEXT NOT NULL,
@@ -270,6 +271,13 @@ function createSchema(database: Database.Database): void {
     database.exec(`ALTER TABLE messages ADD COLUMN reply_to_sender_name TEXT`);
   } catch {
     /* columns already exist */
+  }
+
+  // Add per-job model override column if it doesn't exist.
+  try {
+    database.exec(`ALTER TABLE jobs ADD COLUMN model TEXT DEFAULT NULL`);
+  } catch {
+    /* column already exists */
   }
 }
 
@@ -478,6 +486,7 @@ export interface JobUpsertInput {
   id: string;
   name: string;
   prompt: string;
+  model?: string | null;
   script?: string | null;
   schedule_type: Job['schedule_type'];
   schedule_value: string;
@@ -501,14 +510,15 @@ export function upsertJob(job: JobUpsertInput): { created: boolean } {
   db.prepare(
     `
     INSERT INTO jobs (
-      id, name, prompt, script, schedule_type, schedule_value, status,
+      id, name, prompt, model, script, schedule_type, schedule_value, status,
       linked_sessions, group_scope, created_by, created_at, updated_at,
       next_run, timeout_ms, max_retries, retry_backoff_ms, max_consecutive_failures
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       name = excluded.name,
       prompt = excluded.prompt,
+      model = excluded.model,
       script = excluded.script,
       schedule_type = excluded.schedule_type,
       schedule_value = excluded.schedule_value,
@@ -529,6 +539,7 @@ export function upsertJob(job: JobUpsertInput): { created: boolean } {
     job.id,
     job.name,
     job.prompt,
+    job.model || null,
     job.script || null,
     job.schedule_type,
     job.schedule_value,
@@ -573,6 +584,7 @@ export function updateJob(
       Job,
       | 'name'
       | 'prompt'
+      | 'model'
       | 'script'
       | 'schedule_type'
       | 'schedule_value'
@@ -602,6 +614,10 @@ export function updateJob(
   if (updates.prompt !== undefined) {
     fields.push('prompt = ?');
     values.push(updates.prompt);
+  }
+  if (updates.model !== undefined) {
+    fields.push('model = ?');
+    values.push(updates.model || null);
   }
   if (updates.script !== undefined) {
     fields.push('script = ?');

@@ -41,7 +41,7 @@ Before using this skill, ensure:
 ```bash
 # 1. Setup authentication (interactive)
 npx dotenv -e .env -- npx tsx .claude/skills/x-integration/scripts/setup.ts
-# Verify: data/x-auth.json should exist after successful login
+# Verify: ~/myclaw/data/browser-profiles/x/auth.json should exist after successful login
 
 # 2. Rebuild container to include skill
 ./container/build.sh
@@ -99,12 +99,12 @@ export const config = {
 
 ### Data Directories
 
-Paths relative to project root:
+Paths under `AGENT_ROOT` (default `~/myclaw`):
 
 | Path | Purpose | Git |
 |------|---------|-----|
-| `data/x-browser-profile/` | Chrome profile with X session | Ignored |
-| `data/x-auth.json` | Auth state marker | Ignored |
+| `data/browser-profiles/x/user-data/` | Chrome profile with X session | Ignored |
+| `data/browser-profiles/x/auth.json` | Auth state marker | Ignored |
 | `logs/nanoclaw.log` | Service logs (contains X operation logs) | Ignored |
 
 ## Architecture
@@ -250,11 +250,11 @@ echo "Chrome not found - update CHROME_PATH in .env"
 npx dotenv -e .env -- npx tsx .claude/skills/x-integration/scripts/setup.ts
 ```
 
-This opens Chrome for manual X login. Session saved to `data/x-browser-profile/`.
+This opens Chrome for manual X login. Session saved to `~/myclaw/data/browser-profiles/x/user-data/`.
 
 **Verify success:**
 ```bash
-cat data/x-auth.json  # Should show {"authenticated": true, ...}
+cat ~/myclaw/data/browser-profiles/x/auth.json  # Should show {"authenticated": true, ...}
 ```
 
 ### 3. Rebuild Container
@@ -308,10 +308,10 @@ Scripts require environment variables from `.env`. Use `dotenv-cli` to load them
 
 ```bash
 # Check if auth file exists and is valid
-cat data/x-auth.json 2>/dev/null && echo "Auth configured" || echo "Auth not configured"
+cat ~/myclaw/data/browser-profiles/x/auth.json 2>/dev/null && echo "Auth configured" || echo "Auth not configured"
 
 # Check if browser profile exists
-ls -la data/x-browser-profile/ 2>/dev/null | head -5
+ls -la ~/myclaw/data/browser-profiles/x/user-data/ 2>/dev/null | head -5
 ```
 
 ### Re-authenticate (if expired)
@@ -354,9 +354,9 @@ launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # macOS
 If Chrome fails to launch:
 
 ```bash
-rm -f data/x-browser-profile/SingletonLock
-rm -f data/x-browser-profile/SingletonSocket
-rm -f data/x-browser-profile/SingletonCookie
+rm -f ~/myclaw/data/browser-profiles/x/user-data/SingletonLock
+rm -f ~/myclaw/data/browser-profiles/x/user-data/SingletonSocket
+rm -f ~/myclaw/data/browser-profiles/x/user-data/SingletonCookie
 ```
 
 ### Check Logs
@@ -411,7 +411,7 @@ docker run nanoclaw-agent ls -la /app/src/skills/
 
 ## Security
 
-- `data/x-browser-profile/` - Contains X session cookies (in `.gitignore`)
-- `data/x-auth.json` - Auth state marker (in `.gitignore`)
+- `~/myclaw/data/browser-profiles/x/user-data/` - Contains X session cookies (in `.gitignore`)
+- `~/myclaw/data/browser-profiles/x/auth.json` - Auth state marker (in `.gitignore`)
 - Only main group can use X tools (enforced in `agent.ts` and `host.ts`)
 - Scripts run as subprocesses with limited environment

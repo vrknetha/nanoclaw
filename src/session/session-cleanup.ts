@@ -1,13 +1,16 @@
 import { execFile } from 'child_process';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
 import { logger } from '../core/logger.js';
 
 const CLEANUP_INTERVAL = 24 * 60 * 60 * 1000; // 24 hours
-const SCRIPT_PATH = path.resolve(process.cwd(), 'scripts/cleanup-sessions.sh');
+const SOURCE_DIR = path.dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT = path.resolve(SOURCE_DIR, '..', '..');
+const SCRIPT_PATH = path.join(PROJECT_ROOT, 'scripts', 'cleanup-sessions.sh');
 
 function runCleanup(): void {
-  execFile('/bin/bash', [SCRIPT_PATH], { timeout: 60_000 }, (err, stdout) => {
+  execFile('bash', [SCRIPT_PATH], { timeout: 60_000 }, (err, stdout) => {
     if (err) {
       logger.error({ err }, 'Session cleanup failed');
       return;

@@ -19,6 +19,10 @@ import {
   getHostRuntimeCredentialEnv,
   prepareHostRuntimeContext,
 } from './agent-spawn-host.js';
+import {
+  DEFAULT_BROWSER_PROFILE_NAME,
+  listActiveBrowserSessions,
+} from './browser-manager.js';
 import { computeIpcAuthToken } from './ipc-auth.js';
 import { getPromptProfileService } from './prompt-profile.js';
 import { executeRunnerProcess } from './agent-spawn-process.js';
@@ -130,8 +134,6 @@ export async function spawnAgent(
     ...pickSafeHostEnv(process.env),
     ...hostCredentials.env,
     TZ: TIMEZONE,
-    HOME: AGENT_ROOT,
-    GH_CONFIG_DIR: path.join(AGENT_ROOT, '..', 'gh'),
     NANOCLAW_WORKSPACE_GROUP_DIR: hostRuntime.groupDir,
     NANOCLAW_WORKSPACE_GLOBAL_DIR: hostRuntime.globalDir || '',
     NANOCLAW_WORKSPACE_EXTRA_DIR: path.join(
@@ -148,14 +150,25 @@ export async function spawnAgent(
       ? { AGENT_MEMORY_ROOT: (AGENT_MEMORY_ROOT || '').trim() }
       : {}),
   };
-  if (modelConfig.model) {
-    env.ANTHROPIC_MODEL = modelConfig.model;
+  // Job-level model overrides group-level model.
+  const effectiveModel = input.model || modelConfig.model;
+  const effectiveModelSource = input.model ? 'job.model' : modelConfig.source;
+  if (effectiveModel) {
+    env.ANTHROPIC_MODEL = effectiveModel;
+  }
+  const activeBrowserSession = listActiveBrowserSessions().find(
+    (session) =>
+      session.profileName === DEFAULT_BROWSER_PROFILE_NAME &&
+      session.running &&
+      typeof session.port === 'number',
+  );
+  if (activeBrowserSession?.port) {
+    env.PLAYWRIGHT_MCP_CDP_ENDPOINT = `http://127.0.0.1:${activeBrowserSession.port}`;
   }
 
   const runtimeDetails = [
     `groupDir=${hostRuntime.groupDir}`,
     `globalDir=${hostRuntime.globalDir || '(none)'}`,
-    `home=${AGENT_ROOT}`,
     `ipcInput=${path.join(hostRuntime.groupIpcDir, 'input')}`,
     `onecliApplied=${hostCredentials.onecliApplied}`,
     `onecliCaPath=${hostCredentials.onecliCaPath || '(none)'}`,
@@ -177,8 +190,8 @@ export async function spawnAgent(
     {
       group: group.name,
       processName,
-      model: modelConfig.model ?? null,
-      modelSource: modelConfig.source,
+      model: effectiveModel ?? null,
+      modelSource: effectiveModelSource,
       isMain: input.isMain,
       systemPromptChars: compiledSystemPrompt.length,
     },

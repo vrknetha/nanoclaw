@@ -6,9 +6,11 @@
  */
 
 import path from 'path';
+import os from 'os';
 
-// Project root - can be overridden for different deployments
-const PROJECT_ROOT = process.env.NANOCLAW_ROOT || process.cwd();
+const HOME_DIR = process.env.HOME || os.homedir();
+const AGENT_ROOT = process.env.AGENT_ROOT || path.join(HOME_DIR, 'myclaw');
+const PROFILE_ROOT = path.join(AGENT_ROOT, 'data', 'browser-profiles', 'x');
 
 /**
  * Configuration object with all settings
@@ -19,11 +21,11 @@ export const config = {
   // Override: CHROME_PATH environment variable
   chromePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
 
-  // Browser profile directory for persistent login sessions
-  browserDataDir: path.join(PROJECT_ROOT, 'data', 'x-browser-profile'),
+  // Shared browser profile directory for persistent login sessions
+  browserDataDir: path.join(PROFILE_ROOT, 'user-data'),
 
   // Auth state marker file
-  authPath: path.join(PROJECT_ROOT, 'data', 'x-auth.json'),
+  authPath: path.join(PROFILE_ROOT, 'auth.json'),
 
   // Browser viewport settings
   viewport: {
@@ -59,4 +61,3 @@ export const config = {
   // Args to ignore when launching Chrome
   chromeIgnoreDefaultArgs: ['--enable-automation'],
 };
-

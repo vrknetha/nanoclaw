@@ -4,6 +4,7 @@ import { RegisteredGroup, ThinkingOverride } from '../core/types.js';
 
 export interface AgentInput {
   prompt: string;
+  model?: string;
   sessionId?: string;
   groupFolder: string;
   chatJid: string;
@@ -44,6 +45,7 @@ export interface JobSnapshotRow {
   id: string;
   name: string;
   prompt: string;
+  model?: string | null;
   script?: string | null;
   schedule_type: string;
   schedule_value: string;

@@ -158,6 +158,17 @@ describe('extractSessionCommand', () => {
     expect(extractSessionCommand('/new later', trigger)).toBeNull();
   });
 
+  it('detects bare /stop', () => {
+    expect(extractSessionCommand('/stop', trigger)).toEqual({
+      kind: 'stop',
+      raw: '/stop',
+    });
+  });
+
+  it('rejects /stop with extra text', () => {
+    expect(extractSessionCommand('/stop now', trigger)).toBeNull();
+  });
+
   it('is case-sensitive for commands', () => {
     expect(extractSessionCommand('/Compact', trigger)).toBeNull();
     expect(extractSessionCommand('/Model', trigger)).toBeNull();
@@ -272,6 +283,41 @@ describe('handleSessionCommand', () => {
     expect(deps.clearCurrentSession).toHaveBeenCalledTimes(1);
     expect(deps.sendMessage).toHaveBeenCalledWith('Started a fresh session.');
     expect(deps.advanceCursor).toHaveBeenCalledWith('100');
+  });
+
+  it('handles /stop by stopping current run without invoking runAgent', async () => {
+    const deps = makeDeps({
+      stopCurrentRun: vi.fn().mockReturnValue(true),
+    });
+    const result = await handleSessionCommand({
+      missedMessages: [makeMsg('/stop')],
+      isMainGroup: true,
+      groupName: 'test',
+      triggerPattern: trigger,
+      timezone: 'UTC',
+      deps,
+    });
+    expect(result).toEqual({ handled: true, success: true });
+    expect(deps.stopCurrentRun).toHaveBeenCalledTimes(1);
+    expect(deps.runAgent).not.toHaveBeenCalled();
+    expect(deps.sendMessage).toHaveBeenCalledWith('Stopping current run.');
+    expect(deps.advanceCursor).toHaveBeenCalledWith('100');
+  });
+
+  it('handles /stop when nothing is active', async () => {
+    const deps = makeDeps({
+      stopCurrentRun: vi.fn().mockReturnValue(false),
+    });
+    const result = await handleSessionCommand({
+      missedMessages: [makeMsg('/stop')],
+      isMainGroup: true,
+      groupName: 'test',
+      triggerPattern: trigger,
+      timezone: 'UTC',
+      deps,
+    });
+    expect(result).toEqual({ handled: true, success: true });
+    expect(deps.sendMessage).toHaveBeenCalledWith('No active run to stop.');
   });
 
   it('handles authorized /runtime in main group', async () => {

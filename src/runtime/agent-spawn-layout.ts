@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
 import { AGENT_ROOT } from '../core/config.js';
 import { logger } from '../core/logger.js';
@@ -12,7 +13,9 @@ const CLAUDE_SESSION_SETTINGS = {
   },
 };
 
-const AGENT_RUNNER_SOURCE_DIR = path.join(process.cwd(), 'agent-runner');
+const SOURCE_DIR = path.dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT = path.resolve(SOURCE_DIR, '..', '..');
+const AGENT_RUNNER_SOURCE_DIR = path.join(PROJECT_ROOT, 'agent-runner');
 const AGENT_RUNNER_RUNTIME_DIR = path.join(
   AGENT_ROOT,
   '.runtime',
@@ -160,6 +163,10 @@ export function ensureGroupIpcLayout(groupIpcDir: string): void {
   fs.mkdirSync(path.join(groupIpcDir, 'input'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'memory-requests'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'memory-responses'), { recursive: true });
+  fs.mkdirSync(path.join(groupIpcDir, 'browser-requests'), { recursive: true });
+  fs.mkdirSync(path.join(groupIpcDir, 'browser-responses'), {
+    recursive: true,
+  });
   fs.mkdirSync(path.join(groupIpcDir, 'permission-requests'), {
     recursive: true,
   });

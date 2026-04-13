@@ -170,6 +170,58 @@ describe('job scheduler', () => {
     expect(sendMessage).toHaveBeenCalled();
   });
 
+  it('passes per-job model override into AgentInput', async () => {
+    upsertJob({
+      id: 'job-model-override',
+      name: 'model-override',
+      prompt: 'Run with model override',
+      model: 'claude-sonnet-4-6',
+      schedule_type: 'once',
+      schedule_value: new Date(Date.now() - 60_000).toISOString(),
+      linked_sessions: ['group@g.us'],
+      group_scope: 'main',
+      created_by: 'agent',
+      next_run: new Date(Date.now() - 60_000).toISOString(),
+      status: 'active',
+    });
+
+    startSchedulerLoop({
+      registeredGroups: () => ({
+        'group@g.us': {
+          name: 'Main',
+          folder: 'main',
+          trigger: '@Andy',
+          added_at: '2026-01-01T00:00:00.000Z',
+          isMain: true,
+        },
+      }),
+      getSessions: () => ({}),
+      queue: {
+        enqueueTask: vi.fn(
+          (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+            void fn();
+          },
+        ),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      onProcess: () => {},
+      sendMessage: vi.fn(async () => {}),
+    });
+
+    await vi.advanceTimersByTimeAsync(20);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(spawnAgent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ model: 'claude-sonnet-4-6' }),
+      expect.any(Function),
+      expect.any(Function),
+      expect.any(Object),
+    );
+  });
+
   it('sends failed/dead-letter status updates to linked sessions', async () => {
     vi.mocked(spawnAgent).mockResolvedValueOnce({
       status: 'error',

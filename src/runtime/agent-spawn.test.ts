@@ -250,6 +250,35 @@ describe('agent-spawn timeout behavior', () => {
     expect(env.ANTHROPIC_MODEL).toBe('opus');
   });
 
+  it('prefers job-level model override over group model', async () => {
+    vi.mocked(getEffectiveModelConfig).mockReturnValue({
+      model: 'opus',
+      source: 'group.agentConfig.model' as const,
+    });
+    const groupWithModel: RegisteredGroup = {
+      ...testGroup,
+      agentConfig: { model: 'opus' },
+    };
+    const inputWithJobModel = {
+      ...testInput,
+      model: 'claude-sonnet-4-6',
+    };
+
+    const resultPromise = spawnAgent(groupWithModel, inputWithJobModel, () => {});
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    const spawnCalls = vi.mocked(spawn).mock.calls;
+    expect(spawnCalls.length).toBeGreaterThan(0);
+    const env = spawnCalls[spawnCalls.length - 1][2]?.env as Record<
+      string,
+      string
+    >;
+    expect(env.ANTHROPIC_MODEL).toBe('claude-sonnet-4-6');
+  });
+
   it('forwards AGENT_MEMORY_ROOT via env when configured', async () => {
     const resultPromise = spawnAgent(testGroup, testInput, () => {});
     await vi.advanceTimersByTimeAsync(10);

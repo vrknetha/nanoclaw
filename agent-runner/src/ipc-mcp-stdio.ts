@@ -11,12 +11,15 @@ import fs from 'fs';
 import path from 'path';
 import { CronExpressionParser } from 'cron-parser';
 import { MemoryIpcAction } from './memory-ipc-contract.js';
+import { BrowserIpcAction } from './browser-ipc-contract.js';
 
 const IPC_DIR = process.env.NANOCLAW_IPC_DIR || '/workspace/ipc';
 const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
 const TASKS_DIR = path.join(IPC_DIR, 'tasks');
 const MEMORY_REQUESTS_DIR = path.join(IPC_DIR, 'memory-requests');
 const MEMORY_RESPONSES_DIR = path.join(IPC_DIR, 'memory-responses');
+const BROWSER_REQUESTS_DIR = path.join(IPC_DIR, 'browser-requests');
+const BROWSER_RESPONSES_DIR = path.join(IPC_DIR, 'browser-responses');
 const IPC_AUTH_TOKEN = process.env.NANOCLAW_IPC_AUTH_TOKEN || '';
 
 // Context from environment variables (set by the agent runner)
@@ -105,6 +108,65 @@ async function requestMemoryAction(
   return { ok: false, error: 'Timed out waiting for memory service response' };
 }
 
+async function requestBrowserAction(
+  action: BrowserIpcAction,
+  payload: Record<string, unknown>,
+): Promise<{
+  ok: boolean;
+  data?: unknown;
+  error?: string;
+}> {
+  fs.mkdirSync(BROWSER_REQUESTS_DIR, { recursive: true });
+  fs.mkdirSync(BROWSER_RESPONSES_DIR, { recursive: true });
+
+  const requestId = `browser-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const reqPath = path.join(BROWSER_REQUESTS_DIR, `${requestId}.json`);
+  const tmpReqPath = `${reqPath}.tmp`;
+
+  fs.writeFileSync(
+    tmpReqPath,
+    JSON.stringify(
+      {
+        requestId,
+        action,
+        payload,
+        ...(IPC_AUTH_TOKEN ? { authToken: IPC_AUTH_TOKEN } : {}),
+      },
+      null,
+      2,
+    ),
+  );
+  fs.renameSync(tmpReqPath, reqPath);
+
+  const deadline = Date.now() + 30_000;
+  const responsePath = path.join(BROWSER_RESPONSES_DIR, `${requestId}.json`);
+
+  while (Date.now() < deadline) {
+    if (fs.existsSync(responsePath)) {
+      try {
+        const data = JSON.parse(fs.readFileSync(responsePath, 'utf-8')) as {
+          ok: boolean;
+          data?: unknown;
+          error?: string;
+        };
+        fs.unlinkSync(responsePath);
+        return data;
+      } catch (err) {
+        return {
+          ok: false,
+          error:
+            err instanceof Error
+              ? err.message
+              : 'Failed to parse browser response',
+        };
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  return { ok: false, error: 'Timed out waiting for browser service response' };
+}
+
 function formatMemoryToolResponse(response: {
   provider?: string;
   data?: unknown;
@@ -121,6 +183,17 @@ function formatMemoryToolResponse(response: {
     null,
     2,
   );
+}
+
+function formatBrowserToolResponse(response: { data?: unknown }): string {
+  if (
+    typeof response.data === 'object' &&
+    response.data !== null &&
+    !Array.isArray(response.data)
+  ) {
+    return JSON.stringify(response.data, null, 2);
+  }
+  return JSON.stringify({ data: response.data }, null, 2);
 }
 
 const server = new McpServer({
@@ -163,6 +236,7 @@ server.tool(
     job_id: z.string().optional(),
     name: z.string(),
     prompt: z.string(),
+    model: z.string().optional(),
     schedule_type: z.enum(['cron', 'interval', 'once', 'manual']),
     schedule_value: z.string().default(''),
     linked_sessions: z.array(z.string()).optional(),
@@ -207,6 +281,7 @@ server.tool(
       jobId: args.job_id,
       name: args.name,
       prompt: args.prompt,
+      model: args.model,
       schedule_type: args.schedule_type,
       schedule_value: args.schedule_value,
       linkedSessions: args.linked_sessions,
@@ -281,6 +356,7 @@ server.tool(
     job_id: z.string(),
     name: z.string().optional(),
     prompt: z.string().optional(),
+    model: z.string().optional(),
     schedule_type: z.enum(['cron', 'interval', 'once', 'manual']).optional(),
     schedule_value: z.string().optional(),
     linked_sessions: z.array(z.string()).optional(),
@@ -296,6 +372,7 @@ server.tool(
       jobId: args.job_id,
       name: args.name,
       prompt: args.prompt,
+      model: args.model,
       schedule_type: args.schedule_type,
       schedule_value: args.schedule_value,
       linkedSessions: args.linked_sessions,
@@ -546,6 +623,98 @@ server.tool(
     }
     return {
       content: [{ type: 'text' as const, text: formatMemoryToolResponse(response) }],
+    };
+  },
+);
+
+server.tool(
+  'browser_profile_list',
+  'List available browser profiles and metadata.',
+  {},
+  async () => {
+    const response = await requestBrowserAction('browser_profile_list', {});
+    if (!response.ok) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Browser profile list failed: ${response.error || 'unknown error'}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+    return {
+      content: [{ type: 'text' as const, text: formatBrowserToolResponse(response) }],
+    };
+  },
+);
+
+server.tool(
+  'browser_launch',
+  'Launch or reuse the shared Chrome browser session (profile: myclaw).',
+  {
+    profile_name: z.string().optional().default('myclaw'),
+    headless: z.boolean().optional(),
+    cdp_port: z.number().optional(),
+    keep_alive_ms: z.number().optional(),
+  },
+  async (args) => {
+    const response = await requestBrowserAction('browser_launch', args);
+    if (!response.ok) {
+      return {
+        content: [{ type: 'text' as const, text: `Browser launch failed: ${response.error || 'unknown error'}` }],
+        isError: true,
+      };
+    }
+    return {
+      content: [{ type: 'text' as const, text: formatBrowserToolResponse(response) }],
+    };
+  },
+);
+
+server.tool(
+  'browser_close',
+  'Close the shared Chrome browser session (profile: myclaw).',
+  {
+    profile_name: z.string().optional().default('myclaw'),
+  },
+  async (args) => {
+    const response = await requestBrowserAction('browser_close', args);
+    if (!response.ok) {
+      return {
+        content: [{ type: 'text' as const, text: `Browser close failed: ${response.error || 'unknown error'}` }],
+        isError: true,
+      };
+    }
+    return {
+      content: [{ type: 'text' as const, text: formatBrowserToolResponse(response) }],
+    };
+  },
+);
+
+server.tool(
+  'browser_status',
+  'Get status for the shared Chrome browser session (profile: myclaw).',
+  {
+    profile_name: z.string().optional().default('myclaw'),
+  },
+  async (args) => {
+    const response = await requestBrowserAction('browser_status', args);
+    if (!response.ok) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Browser status failed: ${response.error || 'unknown error'}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    return {
+      content: [{ type: 'text' as const, text: formatBrowserToolResponse(response) }],
     };
   },
 );

@@ -30,6 +30,7 @@ export interface MessageLoopDeps {
     sendMessage: (chatJid: string, text: string) => boolean;
     enqueueMessageCheck: (chatJid: string) => void;
     closeStdin: (chatJid: string) => void;
+    stopGroup?: (chatJid: string) => boolean;
   };
 }
 
@@ -74,22 +75,27 @@ export async function startMessagePollingLoop(
 
           const isMainGroup = group.isMain === true;
 
+          const triggerPattern = getTriggerPattern(group.trigger);
           const loopCmdMsg = groupMessages.find(
-            (m) =>
-              extractSessionCommand(
-                m.content,
-                getTriggerPattern(group.trigger),
-              ) !== null,
+            (m) => extractSessionCommand(m.content, triggerPattern) !== null,
           );
 
           if (loopCmdMsg) {
+            const loopCommand = extractSessionCommand(
+              loopCmdMsg.content,
+              triggerPattern,
+            );
             if (
               isSessionCommandAllowed(
                 isMainGroup,
                 loopCmdMsg.is_from_me === true,
               )
             ) {
-              deps.queue.closeStdin(chatJid);
+              if (loopCommand?.kind === 'stop') {
+                deps.queue.stopGroup?.(chatJid);
+              } else {
+                deps.queue.closeStdin(chatJid);
+              }
             }
             deps.queue.enqueueMessageCheck(chatJid);
             continue;
@@ -97,7 +103,6 @@ export async function startMessagePollingLoop(
 
           const needsTrigger = !isMainGroup && group.requiresTrigger !== false;
           if (needsTrigger) {
-            const triggerPattern = getTriggerPattern(group.trigger);
             const allowlistCfg = loadSenderAllowlist();
             const hasTrigger = groupMessages.some(
               (m) =>
@@ -132,6 +137,17 @@ export async function startMessagePollingLoop(
               .setTyping?.(chatJid, true)
               ?.catch((err: unknown) =>
                 logger.warn({ chatJid, err }, 'Failed to set typing indicator'),
+              );
+            channel
+              .sendProgressUpdate?.(
+                chatJid,
+                'Still working on it, got your follow-up.',
+              )
+              ?.catch((err: unknown) =>
+                logger.warn(
+                  { chatJid, err },
+                  'Failed to send follow-up progress update',
+                ),
               );
           } else {
             deps.queue.enqueueMessageCheck(chatJid);

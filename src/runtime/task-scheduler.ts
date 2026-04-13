@@ -317,6 +317,7 @@ async function runJob(job: Job, deps: SchedulerDependencies): Promise<void> {
           execution.group,
           {
             prompt: currentJob.prompt,
+            model: currentJob.model || undefined,
             sessionId,
             groupFolder: execution.group.folder,
             chatJid: execution.executionJid,

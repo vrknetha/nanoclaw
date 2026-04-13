@@ -1,3 +1,4 @@
+import { AGENT_ROOT } from '../core/config.js';
 import { logger } from '../core/logger.js';
 import { Channel, NewMessage, RegisteredGroup } from '../core/types.js';
 import { startRemoteControl, stopRemoteControl } from './remote-control.js';
@@ -19,7 +20,7 @@ export async function handleRemoteControlCommand(
   msg: NewMessage,
   getGroup: (chatJid: string) => RegisteredGroup | undefined,
   findChannel: (chatJid: string) => Channel | undefined,
-  cwd = process.cwd(),
+  cwd = AGENT_ROOT,
 ): Promise<void> {
   const group = getGroup(chatJid);
   if (!group?.isMain) {

@@ -30,6 +30,17 @@ import {
   RegisteredGroup,
 } from '../core/types.js';
 import { validateIpcAuthToken } from './ipc-auth.js';
+import {
+  BrowserIpcAction,
+  BROWSER_IPC_ACTIONS,
+} from './browser-ipc-contract.js';
+import { createProfile } from './browser-profiles.js';
+import {
+  DEFAULT_BROWSER_PROFILE_NAME,
+  closeBrowser,
+  getBrowserStatus,
+  launchBrowser,
+} from './browser-manager.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
@@ -54,6 +65,7 @@ const IPC_RATE_LIMIT_WINDOW_MS = 60_000;
 const IPC_RATE_LIMIT_MAX_FILES_PER_WINDOW = 300;
 const MEMORY_IPC_REQUEST_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
 const PERMISSION_IPC_REQUEST_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
+const BROWSER_IPC_REQUEST_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
 const ipcRateLimitState = new Map<
   string,
   { windowStart: number; count: number }
@@ -191,6 +203,7 @@ interface ParsedTaskIpcData {
   type: string;
   taskId?: string;
   prompt?: string;
+  model?: string;
   schedule_type?: 'cron' | 'interval' | 'once' | 'manual';
   schedule_value?: string;
   context_mode?: string;
@@ -262,6 +275,7 @@ function parseTaskIpcData(
   const parsed: ParsedTaskIpcData = { type };
   const taskId = toTrimmedString(raw.taskId, { maxLen: 128 });
   const prompt = toTrimmedString(raw.prompt, { maxLen: 20000 });
+  const model = toTrimmedString(raw.model, { maxLen: 120 });
   const scheduleType = toScheduleType(raw.scheduleType);
   const scheduleTypeSnake = toScheduleType(raw.schedule_type);
   const scheduleValue = toTrimmedString(raw.scheduleValue, {
@@ -307,6 +321,7 @@ function parseTaskIpcData(
 
   if (taskId) parsed.taskId = taskId;
   if (prompt !== undefined) parsed.prompt = prompt;
+  if (model !== undefined) parsed.model = model;
   if (scheduleType !== undefined) parsed.scheduleType = scheduleType;
   if (scheduleTypeSnake !== undefined) parsed.schedule_type = scheduleTypeSnake;
   if (scheduleValue !== undefined) parsed.schedule_value = scheduleValue;
@@ -442,6 +457,169 @@ function writePermissionIpcResponse(
   fs.renameSync(tmpPath, responsePath);
 }
 
+function parseBrowserIpcRequest(
+  raw: unknown,
+  sourceGroup: string,
+): {
+  requestId: string;
+  action: BrowserIpcAction;
+  payload: Record<string, unknown>;
+} {
+  if (!isPlainObject(raw)) throw new Error('Invalid browser IPC payload');
+  const authToken = toTrimmedString(raw.authToken, { maxLen: 512 }) || '';
+  if (!validateIpcAuthToken(sourceGroup, authToken)) {
+    throw new Error('Invalid browser IPC auth token');
+  }
+  const requestId = toTrimmedString(raw.requestId, { maxLen: 128 });
+  const action = toTrimmedString(raw.action, { maxLen: 64 });
+  if (!requestId || !action) {
+    throw new Error('Invalid browser IPC request envelope');
+  }
+  if (!BROWSER_IPC_REQUEST_ID_PATTERN.test(requestId)) {
+    throw new Error('Invalid browser IPC requestId');
+  }
+  if (!BROWSER_IPC_ACTIONS.includes(action as BrowserIpcAction)) {
+    throw new Error(`Unsupported browser IPC action: ${action}`);
+  }
+  const payload = raw.payload === undefined ? {} : raw.payload;
+  if (!isPlainObject(payload)) {
+    throw new Error('Invalid browser IPC payload body');
+  }
+  return {
+    requestId,
+    action: action as BrowserIpcAction,
+    payload,
+  };
+}
+
+function writeBrowserIpcResponse(
+  ipcBaseDir: string,
+  sourceGroup: string,
+  response: { requestId: string; ok: boolean; data?: unknown; error?: string },
+): void {
+  const responseDir = path.join(ipcBaseDir, sourceGroup, 'browser-responses');
+  fs.mkdirSync(responseDir, { recursive: true });
+  const responsePath = path.join(responseDir, `${response.requestId}.json`);
+  const tmpPath = `${responsePath}.tmp`;
+  fs.writeFileSync(
+    tmpPath,
+    JSON.stringify(
+      {
+        requestId: response.requestId,
+        ok: response.ok,
+        ...(response.data !== undefined ? { data: response.data } : {}),
+        ...(response.error ? { error: response.error } : {}),
+      },
+      null,
+      2,
+    ),
+  );
+  fs.renameSync(tmpPath, responsePath);
+}
+
+function getProfileNameFromPayload(payload: Record<string, unknown>): string {
+  const requested = toTrimmedString(payload.profile_name, { maxLen: 64 });
+  if (!requested) return DEFAULT_BROWSER_PROFILE_NAME;
+  const normalized = requested.toLowerCase();
+  if (normalized !== DEFAULT_BROWSER_PROFILE_NAME) {
+    throw new Error(
+      `Only browser profile \"${DEFAULT_BROWSER_PROFILE_NAME}\" is supported`,
+    );
+  }
+  return normalized;
+}
+
+async function processBrowserIpcRequest(
+  request: {
+    requestId: string;
+    action: BrowserIpcAction;
+    payload: Record<string, unknown>;
+  },
+  sourceGroup: string,
+  isMain: boolean,
+): Promise<{ ok: boolean; data?: unknown; error?: string }> {
+  const mainOnlyActions = new Set<BrowserIpcAction>([
+    'browser_profile_list',
+    'browser_launch',
+    'browser_close',
+    'browser_status',
+  ]);
+
+  if (!isMain && mainOnlyActions.has(request.action)) {
+    return {
+      ok: false,
+      error: `Browser action ${request.action} is restricted to the main group`,
+    };
+  }
+
+  try {
+    switch (request.action) {
+      case 'browser_profile_list': {
+        const profile = createProfile(DEFAULT_BROWSER_PROFILE_NAME);
+        const profiles = [
+          {
+            name: profile.name,
+            created_at: profile.metadata.created_at,
+            last_used: profile.metadata.last_used,
+            cdp_port: profile.metadata.cdp_port,
+            auth_markers: profile.metadata.auth_markers || [],
+            has_state: fs.existsSync(profile.statePath),
+          },
+        ];
+        return { ok: true, data: { profiles } };
+      }
+
+      case 'browser_launch': {
+        const profileName = getProfileNameFromPayload(request.payload);
+        const status = await launchBrowser({
+          profileName,
+          headless: toOptionalBoolean(request.payload.headless),
+          cdpPort: toOptionalNumber(request.payload.cdp_port, {
+            min: 1024,
+            max: 65535,
+          }),
+          keepAliveMs: toOptionalNumber(request.payload.keep_alive_ms, {
+            min: 10_000,
+            max: 3_600_000,
+          }),
+        });
+        return { ok: true, data: status };
+      }
+
+      case 'browser_close': {
+        const profileName = getProfileNameFromPayload(request.payload);
+        const closed = await closeBrowser(profileName);
+        return { ok: true, data: closed };
+      }
+
+      case 'browser_status': {
+        const profileName = getProfileNameFromPayload(request.payload);
+        return { ok: true, data: getBrowserStatus(profileName) };
+      }
+
+      default:
+        return {
+          ok: false,
+          error: `Unsupported browser action: ${String(request.action)}`,
+        };
+    }
+  } catch (err) {
+    logger.warn(
+      {
+        err,
+        sourceGroup,
+        action: request.action,
+        requestId: request.requestId,
+      },
+      'Browser IPC request failed',
+    );
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Browser IPC request failed',
+    };
+  }
+}
+
 function jobBelongsToSourceGroup(
   job: { group_scope: string; linked_sessions: string[] },
   sourceGroup: string,
@@ -536,6 +714,11 @@ export function startIpcWatcher(deps: IpcDeps): void {
         ipcBaseDir,
         sourceGroup,
         'memory-requests',
+      );
+      const browserRequestsDir = path.join(
+        ipcBaseDir,
+        sourceGroup,
+        'browser-requests',
       );
       const permissionRequestsDir = path.join(
         ipcBaseDir,
@@ -686,6 +869,73 @@ export function startIpcWatcher(deps: IpcDeps): void {
         );
       }
 
+      // Process browser request/response IPC for this group
+      try {
+        if (isTrustedDirectory(browserRequestsDir)) {
+          const browserFiles = fs
+            .readdirSync(browserRequestsDir)
+            .filter((f) => f.endsWith('.json'));
+          for (const file of browserFiles) {
+            const filePath = path.join(browserRequestsDir, file);
+            let claimedPath = filePath;
+            let requestId: string | undefined;
+            try {
+              if (!canProcessIpcFile(sourceGroup, 'browser')) {
+                throw new Error('Browser IPC rate limit exceeded');
+              }
+              claimedPath = claimIpcFile(filePath);
+              const rawRequest = JSON.parse(
+                fs.readFileSync(claimedPath, 'utf-8'),
+              );
+              const request = parseBrowserIpcRequest(rawRequest, sourceGroup);
+              requestId = request.requestId;
+              const response = await processBrowserIpcRequest(
+                request,
+                sourceGroup,
+                isMain,
+              );
+              writeBrowserIpcResponse(ipcBaseDir, sourceGroup, {
+                requestId,
+                ok: response.ok,
+                data: response.data,
+                error: response.error,
+              });
+              fs.unlinkSync(claimedPath);
+            } catch (err) {
+              if (requestId) {
+                try {
+                  writeBrowserIpcResponse(ipcBaseDir, sourceGroup, {
+                    requestId,
+                    ok: false,
+                    error: 'Failed to process browser request',
+                  });
+                } catch (writeErr) {
+                  logger.warn(
+                    { sourceGroup, requestId, err: writeErr },
+                    'Failed to write browser IPC error fallback',
+                  );
+                }
+              }
+              logger.error(
+                { file, sourceGroup, err },
+                'Error processing browser IPC request',
+              );
+              archiveIpcErrorFile(ipcBaseDir, sourceGroup, file, claimedPath);
+            }
+          }
+        } else if (fs.existsSync(browserRequestsDir)) {
+          logger.warn(
+            { sourceGroup, browserRequestsDir },
+            'Ignoring untrusted browser IPC requests directory',
+          );
+        }
+      } catch (err) {
+        logger.error(
+          { err, sourceGroup },
+          'Error reading browser IPC requests directory',
+        );
+      }
+
       // Process permission request/response IPC for this group
       try {
         if (isTrustedDirectory(permissionRequestsDir)) {
@@ -770,6 +1020,7 @@ export async function processTaskIpc(
     type: string;
     taskId?: string;
     prompt?: string;
+    model?: string;
     schedule_type?: string;
     schedule_value?: string;
     context_mode?: string;
@@ -925,6 +1176,7 @@ export async function processTaskIpc(
         id,
         name,
         prompt,
+        model: data.model || null,
         script: null,
         schedule_type: scheduleType,
         schedule_value: scheduleValue,
@@ -979,6 +1231,7 @@ export async function processTaskIpc(
       const updates: Parameters<typeof updateJob>[1] = {};
       if (data.name !== undefined) updates.name = data.name;
       if (data.prompt !== undefined) updates.prompt = data.prompt;
+      if (data.model !== undefined) updates.model = data.model;
       if (data.script !== undefined) {
         logger.warn(
           { sourceGroup, jobId },

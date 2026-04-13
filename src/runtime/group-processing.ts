@@ -74,6 +74,7 @@ export interface GroupProcessingDeps {
   queue: {
     closeStdin: (chatJid: string) => void;
     notifyIdle: (chatJid: string) => void;
+    stopGroup?: (chatJid: string) => boolean;
     registerProcess: (
       groupJid: string,
       proc: ChildProcess,
@@ -102,6 +103,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
       id: job.id,
       name: job.name,
       prompt: job.prompt,
+      model: job.model || null,
       script: job.script || undefined,
       schedule_type: job.schedule_type,
       schedule_value: job.schedule_value,
@@ -299,6 +301,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
           deps.clearSession(group.folder);
           deleteSession(group.folder);
         },
+        stopCurrentRun: () => deps.queue.stopGroup?.(chatJid) ?? false,
         canSenderInteract: (msg) => {
           const hasTrigger = getTriggerPattern(group.trigger).test(
             msg.content.trim(),
@@ -481,6 +484,9 @@ export function createGroupProcessor(deps: GroupProcessingDeps): {
           if (result.status === 'success' && !result.result) {
             await finalizeStreamingOutput('success-marker');
             deps.queue.notifyIdle(chatJid);
+            // End the runner loop after a completed query so typing/progress
+            // finalize promptly instead of waiting for idle timeout.
+            deps.queue.closeStdin(chatJid);
           }
 
           if (result.status === 'error') {

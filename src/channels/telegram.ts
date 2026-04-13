@@ -138,10 +138,10 @@ function stripInternalTagsPreserveWhitespace(text: string): string {
   return text.replace(/<internal>[\s\S]*?<\/internal>/g, '');
 }
 
-function formatTelegramStreamingText(rawText: string): string {
+function formatTelegramStreamingText(rawText: string, done?: boolean): string {
   const text = stripInternalTagsPreserveWhitespace(rawText);
   if (!text) return '';
-  return parseTextStyles(text, 'telegram');
+  return done ? parseTextStyles(text, 'telegram') : text;
 }
 
 /**
@@ -204,6 +204,9 @@ async function editTelegramMessage(
     });
     return;
   } catch (errV2Raw) {
+    const msg =
+      errV2Raw instanceof Error ? errV2Raw.message : String(errV2Raw);
+    if (/message is not modified/i.test(msg)) return;
     logger.debug(
       { err: errV2Raw },
       'MarkdownV2 edit failed, retrying with escaped text',
@@ -221,13 +224,22 @@ async function editTelegramMessage(
     );
     return;
   } catch (errV2Escaped) {
+    const msg =
+      errV2Escaped instanceof Error ? errV2Escaped.message : String(errV2Escaped);
+    if (/message is not modified/i.test(msg)) return;
     logger.debug(
       { err: errV2Escaped },
       'Escaped MarkdownV2 edit failed, falling back to plain text',
     );
   }
 
-  await api.editMessageText(chatId, messageId, text);
+  try {
+    await api.editMessageText(chatId, messageId, text);
+  } catch (errPlain) {
+    const msg = errPlain instanceof Error ? errPlain.message : String(errPlain);
+    if (/message is not modified/i.test(msg)) return;
+    throw errPlain;
+  }
 }
 
 export class TelegramChannel implements Channel {
@@ -447,7 +459,10 @@ export class TelegramChannel implements Channel {
     }
 
     if (text) state.rawBuffer += text;
-    const renderedBuffer = formatTelegramStreamingText(state.rawBuffer);
+    const renderedBuffer = formatTelegramStreamingText(
+      state.rawBuffer,
+      options.done,
+    );
     const hasContent = renderedBuffer.trim().length > 0;
     if (!hasContent) {
       if (options.done) this.activeGroupStreams.delete(key);
@@ -464,29 +479,69 @@ export class TelegramChannel implements Channel {
       if (shouldFlush) {
         const headText = renderedBuffer.slice(0, TELEGRAM_DRAFT_MAX_LENGTH);
         if (!state.messageId) {
+          // First message — send as plain text during streaming, formatted on done
           const sendOptions = state.threadId
             ? { message_thread_id: state.threadId }
             : {};
-          const messageId = await sendTelegramMessageWithResult(
-            this.bot.api,
-            numericId,
-            headText,
-            sendOptions,
-          );
-          if (messageId) state.messageId = messageId;
-        } else {
+          if (options.done) {
+            const messageId = await sendTelegramMessageWithResult(
+              this.bot.api,
+              numericId,
+              headText,
+              sendOptions,
+            );
+            if (messageId) state.messageId = messageId;
+          } else {
+            const sent = await this.bot.api.sendMessage(
+              numericId,
+              headText,
+              sendOptions,
+            );
+            const messageId = (sent as { message_id?: number })?.message_id;
+            if (messageId) state.messageId = messageId;
+          }
+        } else if (options.done) {
+          // Final edit — apply MarkdownV2 formatting
           await editTelegramMessage(
             this.bot.api,
             numericId,
             state.messageId,
             headText,
           );
+        } else {
+          // Intermediate edits — plain text, single API call, no fallback cascade
+          try {
+            await this.bot.api.editMessageText(numericId, state.messageId, headText);
+          } catch (err) {
+            const msg = this.sanitizeErrorMessage(err);
+            if (!/message is not modified/i.test(msg)) {
+              logger.debug({ err: msg }, 'Streaming plain-text edit failed');
+            }
+          }
         }
         state.lastFlushAt = now;
       }
     } catch (err) {
+      const sanitizedError = this.sanitizeErrorMessage(err);
+      const isNotModified = /message is not modified/i.test(sanitizedError);
+      if (isNotModified) {
+        logger.debug(
+          { jid, err: sanitizedError },
+          'Telegram group stream update had no text changes',
+        );
+        if (options.done) {
+          this.activeGroupStreams.delete(key);
+          const overflowText = renderedBuffer
+            .slice(TELEGRAM_DRAFT_MAX_LENGTH)
+            .trim();
+          if (overflowText) {
+            await this.sendMessage(jid, overflowText, options.threadId);
+          }
+        }
+        return;
+      }
       logger.warn(
-        { jid, err: this.sanitizeErrorMessage(err) },
+        { jid, err: sanitizedError },
         'Telegram group stream update failed',
       );
       if (options.done) {
@@ -1178,12 +1233,25 @@ export class TelegramChannel implements Channel {
     }
 
     if (existing.messageId) {
-      await editTelegramMessage(
-        this.bot.api,
-        numericId,
-        existing.messageId,
-        nextText,
-      );
+      try {
+        await editTelegramMessage(
+          this.bot.api,
+          numericId,
+          existing.messageId,
+          nextText,
+        );
+      } catch (err) {
+        logger.debug(
+          { jid, err },
+          'Failed to edit progress message, creating a fresh one',
+        );
+        existing.messageId = await sendTelegramMessageWithResult(
+          this.bot.api,
+          numericId,
+          nextText,
+          sendOptions,
+        );
+      }
     } else {
       existing.messageId = await sendTelegramMessageWithResult(
         this.bot.api,

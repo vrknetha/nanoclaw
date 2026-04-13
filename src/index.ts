@@ -70,6 +70,7 @@ import {
 import { createGroupProcessor } from './runtime/group-processing.js';
 import { runRuntimeStartupPreflight } from './runtime/runtime-diagnostics.js';
 import { ensurePromptProfileBootstrapped } from './runtime/prompt-profile.js';
+import { closeAllBrowsers } from './runtime/browser-manager.js';
 
 export { escapeXml, formatMessages } from './messaging/router.js';
 
@@ -209,6 +210,7 @@ const groupProcessor = createGroupProcessor({
   queue: {
     closeStdin: (chatJid) => queue.closeStdin(chatJid),
     notifyIdle: (chatJid) => queue.notifyIdle(chatJid),
+    stopGroup: (chatJid) => queue.stopGroup(chatJid),
     registerProcess: (groupJid, proc, containerName, groupFolder) =>
       queue.registerProcess(groupJid, proc, containerName, groupFolder),
   },
@@ -266,6 +268,7 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
     await queue.shutdown(10000);
+    await closeAllBrowsers();
     for (const ch of channels) await ch.disconnect();
     process.exit(0);
   };
@@ -343,6 +346,7 @@ async function main(): Promise<void> {
       id: job.id,
       name: job.name,
       prompt: job.prompt,
+      model: job.model || null,
       script: job.script || undefined,
       schedule_type: job.schedule_type,
       schedule_value: job.schedule_value,

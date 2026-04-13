@@ -15,6 +15,7 @@
  */
 
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { execFile } from 'child_process';
 import {
@@ -894,7 +895,8 @@ interface ScriptResult {
 const SCRIPT_TIMEOUT_MS = 30_000;
 
 async function runScript(script: string): Promise<ScriptResult | null> {
-  const scriptPath = '/tmp/task-script.sh';
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'myclaw-script-'));
+  const scriptPath = path.join(tempDir, 'task-script.sh');
   fs.writeFileSync(scriptPath, script, { mode: 0o755 });
 
   return new Promise((resolve) => {
@@ -907,6 +909,12 @@ async function runScript(script: string): Promise<ScriptResult | null> {
         env: process.env,
       },
       (error, stdout, stderr) => {
+        try {
+          fs.rmSync(tempDir, { recursive: true, force: true });
+        } catch {
+          // best-effort cleanup
+        }
+
         if (stderr) {
           log(`Script stderr: ${stderr.slice(0, 500)}`);
         }
@@ -1114,11 +1122,6 @@ async function main(): Promise<void> {
   try {
     const stdinData = await readStdin();
     containerInput = JSON.parse(stdinData);
-    try {
-      fs.unlinkSync('/tmp/input.json');
-    } catch {
-      /* may not exist */
-    }
     log(`Received input for group: ${containerInput.groupFolder}`);
   } catch (err) {
     writeOutput({

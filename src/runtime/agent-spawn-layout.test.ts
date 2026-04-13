@@ -266,7 +266,7 @@ describe('ensureGroupIpcLayout', () => {
     }
   });
 
-  it('creates all 7 IPC subdirectories', async () => {
+  it('creates all 9 IPC subdirectories', async () => {
     const root = makeTmpRoot(roots);
     const ipcDir = path.join(root, 'group-ipc');
 
@@ -279,6 +279,8 @@ describe('ensureGroupIpcLayout', () => {
     ensureGroupIpcLayout(ipcDir);
 
     const expected = [
+      'browser-requests',
+      'browser-responses',
       'input',
       'memory-requests',
       'memory-responses',
@@ -294,7 +296,7 @@ describe('ensureGroupIpcLayout', () => {
       expect(fs.statSync(fullPath).isDirectory()).toBe(true);
     }
 
-    // Exactly these 7 and nothing else
+    // Exactly these 9 and nothing else
     const actual = fs.readdirSync(ipcDir).sort();
     expect(actual).toEqual(expected);
   });
@@ -314,6 +316,8 @@ describe('ensureGroupIpcLayout', () => {
     ensureGroupIpcLayout(ipcDir);
 
     expect(fs.readdirSync(ipcDir).sort()).toEqual([
+      'browser-requests',
+      'browser-responses',
       'input',
       'memory-requests',
       'memory-responses',

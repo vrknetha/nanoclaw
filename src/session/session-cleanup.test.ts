@@ -29,7 +29,7 @@ describe('session-cleanup', () => {
     vi.advanceTimersByTime(30_000);
     expect(mockExecFile).toHaveBeenCalledTimes(1);
     expect(mockExecFile).toHaveBeenCalledWith(
-      '/bin/bash',
+      'bash',
       expect.arrayContaining([expect.stringContaining('cleanup-sessions.sh')]),
       { timeout: 60_000 },
       expect.any(Function),

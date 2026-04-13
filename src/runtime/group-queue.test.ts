@@ -363,7 +363,7 @@ describe('GroupQueue', () => {
     await vi.advanceTimersByTimeAsync(10);
   });
 
-  it('sendMessage resets idleWaiting so a subsequent task enqueue does not preempt', async () => {
+  it('does not pipe follow-up messages into an idle-waiting container', async () => {
     const fs = await import('fs');
     let resolveProcess: () => void;
 
@@ -387,20 +387,98 @@ describe('GroupQueue', () => {
     // Container becomes idle
     queue.notifyIdle('group1@g.us');
 
-    // A new user message arrives — resets idleWaiting
-    queue.sendMessage('group1@g.us', 'hello');
+    // A new user message should not be piped into an idle container.
+    // The host should instead spin down this runner and process in a fresh turn.
+    const piped = queue.sendMessage('group1@g.us', 'hello');
+    expect(piped).toBe(false);
 
-    // Task enqueued after message reset — should NOT preempt (agent is working)
+    // enqueueMessageCheck on an idle active container should preempt via _close.
     const writeFileSync = vi.mocked(fs.default.writeFileSync);
     writeFileSync.mockClear();
-
-    const taskFn = vi.fn(async () => {});
-    queue.enqueueTask('group1@g.us', 'task-1', taskFn);
-
-    const closeWrites = writeFileSync.mock.calls.filter(
+    queue.enqueueMessageCheck('group1@g.us');
+    const closeFromPendingMessage = writeFileSync.mock.calls.filter(
       (call) => typeof call[0] === 'string' && call[0].endsWith('_close'),
     );
-    expect(closeWrites).toHaveLength(0);
+    expect(closeFromPendingMessage).toHaveLength(1);
+
+    // A task enqueued after that should not add a duplicate _close write.
+    writeFileSync.mockClear();
+    const taskFn = vi.fn(async () => {});
+    queue.enqueueTask('group1@g.us', 'task-1', taskFn);
+    const closeWritesAfterTask = writeFileSync.mock.calls.filter(
+      (call) => typeof call[0] === 'string' && call[0].endsWith('_close'),
+    );
+    expect(closeWritesAfterTask).toHaveLength(1);
+
+    resolveProcess!();
+    await vi.advanceTimersByTimeAsync(10);
+  });
+
+  it('sendMessage returns false when container is active but idle-waiting', async () => {
+    let resolveProcess: () => void;
+
+    const processMessages = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        resolveProcess = resolve;
+      });
+      return true;
+    });
+
+    queue.setProcessMessagesFn(processMessages);
+    queue.enqueueMessageCheck('group1@g.us');
+    await vi.advanceTimersByTimeAsync(10);
+    queue.registerProcess(
+      'group1@g.us',
+      {} as any,
+      'container-1',
+      'test-group',
+    );
+    queue.notifyIdle('group1@g.us');
+
+    const result = queue.sendMessage('group1@g.us', 'hello');
+    expect(result).toBe(false);
+
+    resolveProcess!();
+    await vi.advanceTimersByTimeAsync(10);
+  });
+
+  it('task enqueue after idle preemption does not issue duplicate close writes', async () => {
+    const fs = await import('fs');
+    let resolveProcess: () => void;
+
+    const processMessages = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        resolveProcess = resolve;
+      });
+      return true;
+    });
+
+    queue.setProcessMessagesFn(processMessages);
+    queue.enqueueMessageCheck('group1@g.us');
+    await vi.advanceTimersByTimeAsync(10);
+    queue.registerProcess(
+      'group1@g.us',
+      {} as any,
+      'container-1',
+      'test-group',
+    );
+    queue.notifyIdle('group1@g.us');
+
+    const writeFileSync = vi.mocked(fs.default.writeFileSync);
+    writeFileSync.mockClear();
+    queue.enqueueMessageCheck('group1@g.us');
+    const firstCloseWrites = writeFileSync.mock.calls.filter(
+      (call) => typeof call[0] === 'string' && call[0].endsWith('_close'),
+    );
+    expect(firstCloseWrites).toHaveLength(1);
+
+    writeFileSync.mockClear();
+    const taskFn = vi.fn(async () => {});
+    queue.enqueueTask('group1@g.us', 'task-1', taskFn);
+    const secondCloseWrites = writeFileSync.mock.calls.filter(
+      (call) => typeof call[0] === 'string' && call[0].endsWith('_close'),
+    );
+    expect(secondCloseWrites).toHaveLength(1);
 
     resolveProcess!();
     await vi.advanceTimersByTimeAsync(10);
@@ -1083,5 +1161,63 @@ describe('GroupQueue', () => {
     completionCallbacks[0]!();
     await vi.advanceTimersByTimeAsync(10);
     expect(processed).toContain('group3@g.us');
+  });
+
+  it('stopGroup returns false when no active run exists', () => {
+    expect(queue.stopGroup('group1@g.us')).toBe(false);
+  });
+
+  it('stopGroup sends SIGTERM to the active process group', async () => {
+    let resolveProcess: () => void;
+    const processMessages = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        resolveProcess = resolve;
+      });
+      return true;
+    });
+    queue.setProcessMessagesFn(processMessages);
+    queue.enqueueMessageCheck('group1@g.us');
+    await vi.advanceTimersByTimeAsync(10);
+
+    const mockProcess = { pid: 4242, killed: false, kill: vi.fn() } as any;
+    queue.registerProcess('group1@g.us', mockProcess, 'container-1', 'team');
+
+    const killSpy = vi.spyOn(process, 'kill').mockReturnValue(true as never);
+    expect(queue.stopGroup('group1@g.us')).toBe(true);
+    expect(killSpy).toHaveBeenCalledWith(-4242, 'SIGTERM');
+    killSpy.mockRestore();
+
+    resolveProcess!();
+    await vi.advanceTimersByTimeAsync(10);
+  });
+
+  it('stopGroup falls back to SIGTERM on the direct process when group kill fails', async () => {
+    let resolveProcess: () => void;
+    const processMessages = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        resolveProcess = resolve;
+      });
+      return true;
+    });
+    queue.setProcessMessagesFn(processMessages);
+    queue.enqueueMessageCheck('group1@g.us');
+    await vi.advanceTimersByTimeAsync(10);
+
+    const mockProcess = { pid: 5252, killed: false, kill: vi.fn() } as any;
+    queue.registerProcess('group1@g.us', mockProcess, 'container-1', 'team');
+
+    const killSpy = vi
+      .spyOn(process, 'kill')
+      .mockImplementationOnce(() => {
+        throw new Error('no process group');
+      })
+      .mockReturnValueOnce(true as never);
+    expect(queue.stopGroup('group1@g.us')).toBe(true);
+    expect(killSpy).toHaveBeenNthCalledWith(1, -5252, 'SIGTERM');
+    expect(killSpy).toHaveBeenNthCalledWith(2, 5252, 'SIGTERM');
+    killSpy.mockRestore();
+
+    resolveProcess!();
+    await vi.advanceTimersByTimeAsync(10);
   });
 });

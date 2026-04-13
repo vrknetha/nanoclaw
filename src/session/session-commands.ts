@@ -8,6 +8,7 @@ import { logger } from '../core/logger.js';
 export type SessionCommand =
   | { kind: 'compact'; raw: '/compact' }
   | { kind: 'new'; raw: '/new' }
+  | { kind: 'stop'; raw: '/stop' }
   | { kind: 'runtime_show'; raw: '/runtime' }
   | { kind: 'model_show'; raw: '/model' }
   | { kind: 'model_set'; raw: string; value: string }
@@ -96,6 +97,7 @@ export function extractSessionCommand(
   text = text.replace(triggerPattern, '').trim();
   if (text === '/compact') return { kind: 'compact', raw: '/compact' };
   if (text === '/new') return { kind: 'new', raw: '/new' };
+  if (text === '/stop') return { kind: 'stop', raw: '/stop' };
   if (text === '/runtime') return { kind: 'runtime_show', raw: '/runtime' };
   if (text === '/model') return { kind: 'model_show', raw: '/model' };
 
@@ -156,6 +158,7 @@ export interface SessionCommandDeps {
   archiveCurrentSession: () => Promise<void>;
   onSessionArchived?: () => Promise<void>;
   clearCurrentSession: () => void;
+  stopCurrentRun?: () => boolean;
   /** Whether the denied sender would normally be allowed to interact (for denial messages). */
   canSenderInteract: (msg: NewMessage) => boolean;
 }
@@ -226,6 +229,15 @@ export async function handleSessionCommand(opts: {
 
   // AUTHORIZED: process pre-command messages first, then run the command
   logger.info({ group: groupName, command: command.raw }, 'Session command');
+
+  if (command.kind === 'stop') {
+    const stopped = deps.stopCurrentRun ? deps.stopCurrentRun() : false;
+    deps.advanceCursor(cmdMsg.timestamp);
+    await deps.sendMessage(
+      stopped ? 'Stopping current run.' : 'No active run to stop.',
+    );
+    return { handled: true, success: true };
+  }
 
   const cmdIndex = missedMessages.indexOf(cmdMsg);
   const preCommandMsgs = missedMessages.slice(0, cmdIndex);
